@@ -1,0 +1,27 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: frontend-cpu-hog
+  namespace: neuroops-demo
+  annotations:
+    # ChaosResult TTL: auto-delete results after 10 minutes so the cluster stays clean
+    litmuschaos.io/chaosresult-ttl: "600"
+spec:
+  engineState: "active"
+  appinfo:
+    appns: "neuroops-demo"
+    applabel: "app=frontend"
+    appkind: "deployment"
+  chaosServiceAccount: "litmus-admin"
+  jobCleanUpPolicy: "delete"
+  experiments:
+    - name: pod-cpu-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "180"
+            - name: CPU_CORES
+              value: "1"
+            - name: CPU_LOAD
+              value: "90"

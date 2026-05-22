@@ -1,0 +1,30 @@
+# Jaeger Helm Chart overrides for a lightweight, all-in-one local setup
+allInOne:
+  enabled: true
+  image:
+    repository: jaegertracing/all-in-one
+    tag: 1.61.0
+  # Expose OTLP ports on the all-in-one container
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Disable separate agent, collector, and query workloads since we are in all-in-one mode
+agent:
+  enabled: false
+
+collector:
+  enabled: false
+
+query:
+  enabled: false
+
+schema:
+  enabled: false
+
+spark:
+  enabled: false

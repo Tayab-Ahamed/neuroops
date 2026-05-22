@@ -1,0 +1,52 @@
+prometheus:
+  prometheusSpec:
+    # Disable Helm release label matching so Prometheus scrapes all ServiceMonitors
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Scraping interval (15s as defined in PRD)
+    scrapeInterval: "15s"
+    evaluationInterval: "15s"
+    # Allow Prometheus to receive remote write (useful for debugging/mirroring)
+    enableAdminAPI: true
+
+# Clean up default resources to fit nicely on a local machine
+prometheusOperator:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+prometheus:
+  prometheusSpec:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1024Mi
+      requests:
+        cpu: 100m
+        memory: 512Mi
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+grafana:
+  enabled: true
+  adminPassword: "admin"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi

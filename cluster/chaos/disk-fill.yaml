@@ -1,0 +1,30 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: backend-disk-fill
+  namespace: neuroops-demo
+  annotations:
+    # ChaosResult TTL: auto-delete results after 10 minutes so the cluster stays clean
+    litmuschaos.io/chaosresult-ttl: "600"
+spec:
+  engineState: "active"
+  appinfo:
+    appns: "neuroops-demo"
+    applabel: "app=backend"
+    appkind: "deployment"
+  chaosServiceAccount: "litmus-admin"
+  jobCleanUpPolicy: "delete"
+  experiments:
+    - name: pod-disk-fill
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "180"
+            # Fill ephemeral storage to 85% of the node. The LitmusChaos disk-fill experiment
+            # uses EPHEMERAL_STORAGE_MEBIBYTES to specify how many MiB to fill.
+            # With a typical 20GiB node ephemeral volume, 85% ≈ 17408 MiB.
+            - name: EPHEMERAL_STORAGE_MEBIBYTES
+              value: "17408"
+            - name: FILL_PATH
+              value: "/var/log"

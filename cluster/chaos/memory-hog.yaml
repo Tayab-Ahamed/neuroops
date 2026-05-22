@@ -1,0 +1,25 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: backend-memory-hog
+  namespace: neuroops-demo
+  annotations:
+    # ChaosResult TTL: auto-delete results after 10 minutes so the cluster stays clean
+    litmuschaos.io/chaosresult-ttl: "600"
+spec:
+  engineState: "active"
+  appinfo:
+    appns: "neuroops-demo"
+    applabel: "app=backend"
+    appkind: "deployment"
+  chaosServiceAccount: "litmus-admin"
+  jobCleanUpPolicy: "delete"
+  experiments:
+    - name: pod-memory-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "180"
+            - name: MEMORY_CONSUMPTION
+              value: "100"  # Consume ~100MB to hit ~80% of backend's 128MB memory limit

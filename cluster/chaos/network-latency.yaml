@@ -1,0 +1,32 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: backend-network-latency
+  namespace: neuroops-demo
+  annotations:
+    # ChaosResult TTL: auto-delete results after 12 minutes (experiment runs for 5 min)
+    litmuschaos.io/chaosresult-ttl: "720"
+spec:
+  engineState: "active"
+  appinfo:
+    appns: "neuroops-demo"
+    applabel: "app=backend"
+    appkind: "deployment"
+  chaosServiceAccount: "litmus-admin"
+  jobCleanUpPolicy: "delete"
+  experiments:
+    - name: pod-network-latency
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "300"
+            - name: NETWORK_LATENCY
+              value: "500"
+            # Target only egress to the database-stub service so other traffic is unaffected.
+            # Replace with the ClusterIP of database-stub-service once deployed:
+            #   kubectl get svc database-stub-service -n neuroops-demo -o jsonpath='{.spec.clusterIP}'
+            - name: DESTINATION_IPS
+              value: "$(DATABASE_STUB_CLUSTER_IP)"
+            - name: DESTINATION_HOSTS
+              value: "database-stub-service.neuroops-demo.svc.cluster.local"

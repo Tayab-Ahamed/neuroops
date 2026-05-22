@@ -1,0 +1,42 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+  memory_limiter:
+    limit_percentage: 80
+    spike_limit_percentage: 20
+    check_interval: 5s
+  attributes:
+    actions:
+      - key: component
+        value: neuroops-agent
+        action: insert
+
+exporters:
+  # Export to the Jaeger OTLP port (4317) using gRPC
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  
+  # Expose OTel Collector metrics for Prometheus scrape on port 8889
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: neuroops
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, attributes]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

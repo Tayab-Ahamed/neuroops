@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing & Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+*.cover
+
+# Trained ML model artifacts (regenerated via `make baseline`)
+detector/models/*.joblib
+checkpoints/
+
+# Benchmark outputs (regenerated via `make bench`)
+benchmarks/results.json
+benchmarks/REPORT.md
+
+# Environment secrets — NEVER commit
+.env
+*.env
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Antigravity agent workspace
+.antigravity/

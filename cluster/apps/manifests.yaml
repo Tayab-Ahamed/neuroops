@@ -1,0 +1,214 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neuroops-demo
+---
+# Database Stub deployment & service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-stub
+  namespace: neuroops-demo
+  labels:
+    app: database-stub
+    app.kubernetes.io/part-of: neuroops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database-stub
+  template:
+    metadata:
+      labels:
+        app: database-stub
+        app.kubernetes.io/part-of: neuroops
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: database-stub
+          image: neuroops-database-stub:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8082
+          env:
+            - name: PORT
+              value: "8082"
+            - name: OTEL_SERVICE_NAME
+              value: "database-stub"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring.svc.cluster.local:4317"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-stub-service
+  namespace: neuroops-demo
+  labels:
+    app: database-stub
+    app.kubernetes.io/part-of: neuroops
+spec:
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+  selector:
+    app: database-stub
+---
+# Backend deployment & service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: neuroops-demo
+  labels:
+    app: backend
+    app.kubernetes.io/part-of: neuroops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        app.kubernetes.io/part-of: neuroops
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: backend
+          image: neuroops-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: PORT
+              value: "8081"
+            - name: DATABASE_URL
+              value: "http://database-stub-service:8082"
+            - name: OTEL_SERVICE_NAME
+              value: "backend"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring.svc.cluster.local:4317"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: neuroops-demo
+  labels:
+    app: backend
+    app.kubernetes.io/part-of: neuroops
+spec:
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+  selector:
+    app: backend
+---
+# Frontend deployment & service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: neuroops-demo
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: neuroops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        app.kubernetes.io/part-of: neuroops
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: frontend
+          image: neuroops-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: BACKEND_URL
+              value: "http://backend-service:8081"
+            - name: OTEL_SERVICE_NAME
+              value: "frontend"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring.svc.cluster.local:4317"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: neuroops-demo
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: neuroops
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+  selector:
+    app: frontend
+---
+# ServiceMonitor to scrape metrics from all three apps using Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: neuroops-apps-monitor
+  namespace: neuroops-demo
+  labels:
+    app.kubernetes.io/part-of: neuroops
+    release: kube-prometheus # Matches standard Helm releases
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: neuroops
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
