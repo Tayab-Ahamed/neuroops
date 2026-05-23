@@ -5,27 +5,27 @@
 [![LangGraph](https://img.shields.io/badge/Framework-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
 [![OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry-blueviolet.svg)](https://opentelemetry.io)
 
-**NeuroOps** is a state-of-the-art, fully autonomous AI SRE (Site Reliability Engineering) agent designed to detect, diagnose, and remediate Kubernetes cluster incidents. Equipped with an explicit **agent self-observability layer** via OpenTelemetry, NeuroOps bridges the gap between infrastructure metrics and AI reasoning traces, providing a completely transparent diagnostic and recovery pipeline.
+**NeuroOps** is an autonomous AI SRE (Site Reliability Engineering) engine designed to detect, diagnose, and remediate Kubernetes cluster incidents. Equipped with an integrated **agent self-observability layer** via OpenTelemetry, NeuroOps bridges the gap between infrastructure metrics and AI reasoning traces, providing a completely transparent diagnostic and recovery pipeline.
 
 ---
 
-## 🚀 Core Capabilities (Phases 0–5 Complete)
+## 🚀 Core Capabilities
 
-* **Multivariate Anomaly Detection (Phase 1 & 2):** Scrapes Prometheus metrics at a 15-second resolution and executes unsupervised **Isolation Forest** models to identify real-time metric anomalies.
-* **LangGraph Multi-Agent Diagnosis (Phase 3):** Combines specialized AI agents in a parallel diagnostic fan-out:
+* **Multivariate Anomaly Detection:** Scrapes Prometheus metrics at a 15-second resolution and executes unsupervised **Isolation Forest** models to identify real-time metric anomalies.
+* **LangGraph Multi-Agent Diagnosis:** Combines specialized SRE agents in a parallel diagnostic workflow:
   - **Detective Agent:** Performs Prometheus metric correlation.
   - **Topologist Agent:** Inspects Jaeger traces to identify bottleneck microservices.
   - **Historian Agent:** Queries GitHub deployments to pinpoint problematic releases.
   - **Supervisor Agent:** Synthesizes findings into a unified, high-confidence root cause hypothesis.
-* **Closed-Loop Auto-Remediation (Phase 4):** Evaluates supervisor hypothesis and automatically maps incidents to precise remediation actions (pod restarts, deployment rollbacks, ConfigMap patches, replica scaling, or opening GitHub PRs) using an approval-gated human-in-the-loop CLI for high-impact (P2) situations.
-* **Self-Observability Layer (Phase 0 & 3):** Exports internal agent execution details (latency, tokens used, decisions, tool calls) as OpenTelemetry spans directly to Jaeger/Grafana, correlating agent logic with system telemetry using a unique `incident_id`.
-* **Chaos Engineering Benchmarks (Phase 5):** Features a robust test runner executing **five distinct chaos scenarios** via LitmusChaos to benchmark recovery latencies and prove MTTR speedups compared to manual engineering teams.
+* **Closed-Loop Auto-Remediation:** Evaluates supervisor hypotheses and automatically maps incidents to precise remediation actions (pod restarts, deployment rollbacks, ConfigMap patches, replica scaling, or opening GitHub PRs) using an approval-gated human-in-the-loop CLI for high-impact situations.
+* **Self-Observability Layer:** Exports internal agent execution details (latency, tokens used, decisions, tool calls) as OpenTelemetry spans directly to Jaeger/Grafana, correlating agent logic with system telemetry using a unique `incident_id`.
+* **Chaos Engineering Benchmarks:** Features a robust test runner executing **five distinct chaos scenarios** via LitmusChaos to benchmark recovery latencies and compare automated MTTR against manual engineering baselines.
 
 ---
 
 ## 🏗️ System Architecture
 
-The following diagram illustrates the workflow of the autonomous loop under chaos injection:
+The following diagram illustrates the workflow of the autonomous SRE loop under chaos injection:
 
 ```mermaid
 graph TD
@@ -112,7 +112,7 @@ neuroops/
 
 ## 🚦 Local Startup & Operation Guide
 
-Understanding what runs where is critical. The local development environment is split into **Infrastructure & Observability** (running in Docker Compose / Minikube) and the **NeuroOps AI Stack** (running as host-level FastAPI services).
+The environment is split into **Infrastructure & Observability** (running in Docker Compose / Minikube) and the **NeuroOps AI Stack** (running as host-level FastAPI services).
 
 ### Step 1: Spin Up the Infrastructure & Observability Stack
 
@@ -139,7 +139,7 @@ make up
 The AI services (`detector`, `agent`, and `remediator`) run as standalone FastAPI instances. 
 
 > [!IMPORTANT]
-> Ensure your virtual environments are configured and your `.env` variables (e.g. `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) are properly declared before starting.
+> Ensure your virtual environments are configured and your environment variables (e.g. `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) are properly declared before starting.
 
 In separate terminals, start each service:
 
@@ -180,7 +180,7 @@ curl -X POST "http://localhost:8001/baseline/train?minutes=30"
 
 ## 💥 Chaos Benchmarks & Performance Tracking
 
-With the entire stack online, you can validate the system's MTTR (Mean Time to Recovery) speedups using the automated benchmark suite. It currently supports 5 specific scenarios:
+With the entire stack online, you can validate the system's MTTR (Mean Time to Recovery) using the automated benchmark suite. It currently supports 5 specific scenarios:
 1. `pod-delete`: Randomly deletes the backend pod every 30s.
 2. `cpu-hog`: Saturation of frontend resources to 90% CPU limit.
 3. `memory-hog`: backend memory saturation to 80% limit.
@@ -197,8 +197,8 @@ make chaos scenario=pod-delete
 make bench
 ```
 
-### View Results & MTTR Speedups
-When the benchmarks runner completes, it automatically aggregates measurements and generates a comprehensive markdown report in `benchmarks/REPORT.md`. NeuroOps consistently achieves an average **10x to 15x speedup** in overall MTTR compared to standard human-operator manual response windows!
+### View Results & MTTR Performance
+When the benchmarks runner completes, it automatically aggregates measurements and generates a comprehensive markdown report in `benchmarks/REPORT.md`. NeuroOps consistently achieves an average **10x to 15x speedup** in overall MTTR compared to standard human-operator manual response windows.
 
 ---
 
@@ -211,4 +211,4 @@ Unit and integration tests are fully provided using Pytest. To execute tests for
 pytest -v --cov
 ```
 
-All 90+ test suites verify complete graph transitions, OTel span exports, anomaly thresholds, and remediation state trees with 100% test passing ratios.
+All test suites verify complete graph transitions, OTel span exports, anomaly thresholds, and remediation state trees with full test passing ratios.
