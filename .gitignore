@@ -47,3 +47,6 @@ Thumbs.db
 
 # Antigravity agent workspace
 .antigravity/
+
+# Incident post-mortems (runtime artifacts)
+postmortems/

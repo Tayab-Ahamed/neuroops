@@ -5,6 +5,7 @@ from agents.supervisor import supervisor_init_node, supervisor_synthesize_node
 from agents.detective import detective_node
 from agents.topologist import topologist_node
 from agents.historian import historian_node
+from agents.log_analyser import log_analyser_node
 from tracing import traced_node
 
 logger = structlog.get_logger()
@@ -40,6 +41,7 @@ workflow.add_node("supervisor_init", supervisor_init_node)
 workflow.add_node("detective", detective_node)
 workflow.add_node("topologist", topologist_node)
 workflow.add_node("historian", historian_node)
+workflow.add_node("log_analyser", log_analyser_node)
 workflow.add_node("supervisor_synthesize", supervisor_synthesize_node)
 workflow.add_node("human_escalation", human_escalation_node)
 workflow.add_node("remediator", remediator_node)
@@ -51,11 +53,13 @@ workflow.add_edge(START, "supervisor_init")
 workflow.add_edge("supervisor_init", "detective")
 workflow.add_edge("supervisor_init", "topologist")
 workflow.add_edge("supervisor_init", "historian")
+workflow.add_edge("supervisor_init", "log_analyser")
 
 # Fan-in from diagnosis agents to the synthesis supervisor
 workflow.add_edge("detective", "supervisor_synthesize")
 workflow.add_edge("topologist", "supervisor_synthesize")
 workflow.add_edge("historian", "supervisor_synthesize")
+workflow.add_edge("log_analyser", "supervisor_synthesize")
 
 # Conditional edge based on LLM confidence and approval flags
 workflow.add_conditional_edges(
@@ -71,5 +75,7 @@ workflow.add_conditional_edges(
 workflow.add_edge("human_escalation", END)
 workflow.add_edge("remediator", END)
 
-# Compile LangGraph
-graph = workflow.compile()
+# Compile LangGraph with in-memory checkpointer for persistence
+from langgraph.checkpoint.memory import MemorySaver
+memory = MemorySaver()
+graph = workflow.compile(checkpointer=memory)

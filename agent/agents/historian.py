@@ -15,8 +15,9 @@ class HistorianOutput(BaseModel):
 async def historian_node(state: AgentState) -> dict:
     alert = state["alert"]
     
-    # Check for keys. If missing, return mock findings for local test execution
-    if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+    from agents.llm import get_llm
+    llm = get_llm()
+    if llm is None:
         return {
             "historian_findings": {
                 "recent_deploys": [
@@ -33,15 +34,6 @@ async def historian_node(state: AgentState) -> dict:
                 "tokens_used": 800
             }
         }
-
-    # Initialize LangChain LLM
-    from langchain_anthropic import ChatAnthropic
-    from langchain_openai import ChatOpenAI
-    
-    if os.getenv("ANTHROPIC_API_KEY"):
-        llm = ChatAnthropic(model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), temperature=0)
-    else:
-        llm = ChatOpenAI(model="gpt-4o", temperature=0)
         
     tools = [get_recent_deploys]
     llm_with_tools = llm.bind_tools(tools)

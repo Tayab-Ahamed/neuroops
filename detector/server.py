@@ -6,6 +6,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 import structlog
 from scraper import PrometheusScraper, MetricWindow
 from models.isolation_forest import IsolationForestModel
+from models.lstm import LSTMAnomalyModel
 from alerter import Alerter, Alert
 from baseline_collector import collect_historical_baseline
 
@@ -18,20 +19,24 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
-# FastAPI app will be initialized below after defining lifespan context manager
-
 # Global instances
 scraper = PrometheusScraper()
 alerter = Alerter()
 model = IsolationForestModel()
+lstm_model = LSTMAnomalyModel()
 
 # Active alert registry
 active_alerts: List[Alert] = []
-# Model file location
+# Model file locations
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/isolation_forest.joblib")
+LSTM_MODEL_PATH = os.getenv("LSTM_MODEL_PATH", "checkpoints/lstm_model.pt")
 model_loaded = False
+lstm_loaded = False
 
-# Try to load model at startup
+# service_history maps service_name -> list of MetricWindow
+service_history: Dict[str, List[MetricWindow]] = {}
+
+# Try to load IsolationForest model at startup
 try:
     if os.path.exists(MODEL_PATH):
         model.load(MODEL_PATH)
@@ -42,9 +47,18 @@ try:
 except Exception as e:
     logger.error("Failed to load model checkpoint at startup", path=MODEL_PATH, error=str(e))
 
+# Try to load LSTM model at startup
+try:
+    if os.path.exists(LSTM_MODEL_PATH):
+        lstm_model.load(LSTM_MODEL_PATH)
+        lstm_loaded = True
+        logger.info("Successfully loaded LSTM model checkpoint at startup", path=LSTM_MODEL_PATH)
+except Exception as e:
+    logger.error("Failed to load LSTM model checkpoint at startup", path=LSTM_MODEL_PATH, error=str(e))
+
 async def background_scraping_loop():
     """Background task running every 15 seconds to scrape metrics and evaluate anomalies."""
-    global model_loaded
+    global model_loaded, lstm_loaded
     logger.info("Starting background scraping loop task")
     
     while True:
@@ -53,20 +67,42 @@ async def background_scraping_loop():
             windows = scraper.scrape_metrics()
             
             for window in windows:
+                service = window.service_name
+                if service not in service_history:
+                    service_history[service] = []
+                    
+                # Capture history sequence before adding this step
+                sequence = list(service_history[service])
+                
+                # Append and limit history
+                service_history[service].append(window)
+                if len(service_history[service]) > 5:
+                    service_history[service].pop(0)
+                
                 if model_loaded:
-                    # Run anomaly detection
+                    # Run IsolationForest Anomaly detection
                     anomaly_score = model.score(window)
                     is_anomaly = model.predict(window)
+                    
+                    # Run LSTM temporal verification
+                    is_lstm_anomaly = False
+                    if lstm_loaded and len(sequence) >= 5:
+                        is_lstm_anomaly = lstm_model.predict(sequence, window)
                     
                     # Process window with alerter
                     alert = alerter.process_window(window, anomaly_score, is_anomaly)
                     if alert:
+                        # Downclass points that are transient (no temporal trend detected by LSTM)
+                        if lstm_loaded and not is_lstm_anomaly:
+                            alert.severity = "P3"
+                            logger.info("LSTM filtered transient point anomaly: downclassing alert to P3", service=service)
+                            
                         # Append alert and limit registry size to prevent memory leak
                         active_alerts.append(alert)
                         if len(active_alerts) > 500:
                             active_alerts.pop(0)
                 else:
-                    logger.info("Scraping loop in Warmup Mode - skipping anomaly scoring", service=window.service_name)
+                    logger.info("Scraping loop in Warmup Mode - skipping anomaly scoring", service=service)
                     
         except Exception as e:
             logger.error("Error in background scraping loop", error=str(e))
@@ -103,7 +139,7 @@ async def get_health():
 
 def run_async_training(minutes: int):
     """Asynchronous background training process."""
-    global model_loaded
+    global model_loaded, lstm_loaded
     try:
         logger.info("Asynchronous baseline training task started")
         # Query historical data from Prometheus instantly
@@ -112,18 +148,27 @@ def run_async_training(minutes: int):
             logger.error("No metrics returned from Prometheus, training aborted")
             return
         
-        # Fit model
+        # Fit IsolationForest
         new_model = IsolationForestModel()
         new_model.fit(windows)
-        
-        # Save checkpoints
         new_model.save(MODEL_PATH)
         
-        # Swap model globally
+        # Fit LSTM
+        new_lstm = LSTMAnomalyModel()
+        new_lstm.fit(windows)
+        new_lstm.save(LSTM_MODEL_PATH)
+        
+        # Swap models globally
         model.models = new_model.models
         model.features = new_model.features
         model_loaded = True
-        logger.info("Asynchronous model training and reloading completed successfully!")
+        
+        lstm_model.models = new_lstm.models
+        lstm_model.thresholds = new_lstm.thresholds
+        lstm_model.features = new_lstm.features
+        lstm_loaded = True
+        
+        logger.info("Asynchronous IsolationForest and LSTM model training and reloading completed successfully!")
     except Exception as e:
         logger.error("Failed in asynchronous model training process", error=str(e))
 

@@ -19,6 +19,8 @@ app = FastAPI(title="NeuroOps Remediation Engine API", version="1.0.0")
 
 # Global history registry of actions taken
 actions_history: List[ActionResult] = []
+# Global registry of remediation execution timestamps per service for anti-flapping
+flapping_history: Dict[str, List[float]] = {}
 
 class AlertModel(BaseModel):
     id: str
@@ -56,6 +58,8 @@ def extract_service_name(hypothesis: str, reasoning: str) -> str:
         return "backend"
     return "backend" # Default fallback
 
+from remediator.chatops import send_slack_alert
+
 @app.post("/remediate", response_model=ActionResult)
 async def remediate(request: RemediationRequest):
     """
@@ -64,6 +68,15 @@ async def remediate(request: RemediationRequest):
     """
     logger.info("Received remediation request", incident_id=request.incident_id, action=request.recommended_action)
     
+    # Trigger ChatOps Alert (Slack notification / Fallback CLI logging)
+    send_slack_alert(
+        incident_id=request.incident_id,
+        hypothesis=request.hypothesis,
+        confidence=request.confidence,
+        action=request.recommended_action,
+        requires_human_approval=request.requires_human_approval
+    )
+
     # 1. P2 Check / Human approval loop gate
     if request.requires_human_approval:
         logger.info("Action requires human operator approval, invoking CLI loop", incident_id=request.incident_id)
@@ -84,6 +97,56 @@ async def remediate(request: RemediationRequest):
     action_type = request.recommended_action.lower()
     
     logger.info("Parsed remediation target details", service=service, namespace=namespace, action_type=action_type)
+
+    # --- Anti-Flapping Filter Gate ---
+    import time
+    now = time.time()
+    if service not in flapping_history:
+        flapping_history[service] = []
+        
+    # Purge historical entries older than 10 minutes (600 seconds)
+    flapping_history[service] = [t for t in flapping_history[service] if now - t < 600.0]
+    
+    if len(flapping_history[service]) >= 2:
+        logger.warn("Anti-Flapping Lockout active on service!", service=service, action_count=len(flapping_history[service]))
+        result = ActionResult(
+            success=False,
+            action_taken=f"Rejected: Flapping Lockout Active on service '{service}'. Maximum auto-remediation rate exceeded (2 actions / 10m). Autonomous recovery suspended; escalated to human SRE.",
+            duration_seconds=0.0
+        )
+        actions_history.append(result)
+        
+        # Still generate a post-mortem report for the blocked action!
+        from remediator.postmortem import generate_postmortem
+        generate_postmortem(request, result)
+        
+        return result
+
+    # Dry-Run mode validation
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
+    if dry_run:
+        logger.info("Dry-Run mode active. Skipping live cluster operations.", incident_id=request.incident_id)
+        
+        # Simulate Canary Gate
+        logger.info("[Canary Gate] Initiating canary scaling verification...", service=service)
+        time.sleep(0.5)
+        logger.info("[Canary Gate] Canary verified stable. Promoting full remediation.", service=service)
+        
+        result = ActionResult(
+            success=True,
+            action_taken=f"[Dry-Run] Verified canary and successfully executed remediation '{request.recommended_action}' on service '{service}' in namespace '{namespace}'",
+            duration_seconds=0.6
+        )
+        
+        # Log execution in flapping history
+        flapping_history[service].append(time.time())
+        
+        # Generate Post-Mortem Report
+        from remediator.postmortem import generate_postmortem
+        generate_postmortem(request, result)
+        
+        actions_history.append(result)
+        return result
 
     result = None
 
@@ -152,6 +215,14 @@ async def remediate(request: RemediationRequest):
             result.success = False
             result.action_taken += " (Warning: incident verification failed/timed out)"
 
+    # Record execution timestamp for flapping registry on success
+    if result.success:
+        flapping_history[service].append(time.time())
+        
+    # Generate Post-Mortem RCA Report
+    from remediator.postmortem import generate_postmortem
+    generate_postmortem(request, result)
+
     # Record action history
     actions_history.append(result)
     logger.info("Remediation execution completed", success=result.success, action_taken=result.action_taken)
@@ -161,3 +232,36 @@ async def remediate(request: RemediationRequest):
 async def get_actions():
     """Returns the history of all remediation actions executed."""
     return actions_history
+
+from fastapi import Request
+import urllib.parse
+import json
+
+@app.post("/slack/interactions")
+async def slack_interactions(request: Request):
+    """Receives interactive button clicks from Slack approval notifications."""
+    try:
+        body = await request.body()
+        body_str = body.decode("utf-8")
+        
+        parsed = urllib.parse.parse_qs(body_str)
+        payload_list = parsed.get("payload")
+        if not payload_list:
+            return {"status": "error", "message": "No payload found"}
+            
+        payload = payload_list[0]
+        data = json.loads(payload)
+        actions = data.get("actions", [])
+        if not actions:
+            return {"status": "error", "message": "No actions found"}
+            
+        action_val = actions[0].get("value") # "approved" or "rejected"
+        block_id = actions[0].get("block_id", "") # "approval_{incident_id}"
+        incident_id = block_id.replace("approval_", "") if block_id.startswith("approval_") else "unknown"
+        
+        logger.info("Received Slack interaction callback", incident_id=incident_id, action_value=action_val)
+        
+        return {"status": "ok", "message": f"Remediation {action_val} parsed for incident {incident_id}"}
+    except Exception as e:
+        logger.error("Failed to parse Slack interaction payload", error=str(e))
+        raise HTTPException(status_code=400, detail="Invalid interaction payload")

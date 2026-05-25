@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from remediator.server import app, actions_history, RemediationRequest
+from remediator.server import app, actions_history, flapping_history, RemediationRequest
 from remediator.actions import ActionResult
 
 client = TestClient(app)
@@ -9,6 +9,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def clear_history():
     actions_history.clear()
+    flapping_history.clear()
 
 def test_get_actions_empty():
     response = client.get("/actions")
@@ -313,3 +314,71 @@ def test_remediate_verification_fail_warning():
         assert data["success"] is False
         assert "warning: incident verification failed" in data["action_taken"].lower()
         assert mock_verify.called
+
+def test_remediate_flapping_lockout():
+    from remediator.server import flapping_history
+    flapping_history.clear()
+    
+    payload = {
+        "incident_id": "inc-flap-test",
+        "hypothesis": "High CPU load on backend",
+        "confidence": 0.85,
+        "recommended_action": "scale",
+        "requires_human_approval": False,
+        "reasoning": "backend CPU usage > 90%",
+        "replicas": 5
+    }
+    
+    mock_action_result = ActionResult(
+        success=True,
+        action_taken="Scaled replicas to 5",
+        duration_seconds=1.5
+    )
+
+    with patch("remediator.server.scale_deployment", return_value=mock_action_result):
+        # First action: Success
+        res1 = client.post("/remediate", json=payload)
+        assert res1.status_code == 200
+        assert res1.json()["success"] is True
+        
+        # Second action: Success
+        res2 = client.post("/remediate", json=payload)
+        assert res2.status_code == 200
+        assert res2.json()["success"] is True
+        
+        # Third action within 10m window: Should trigger Flapping Lockout (False)
+        res3 = client.post("/remediate", json=payload)
+        assert res3.status_code == 200
+        data = res3.json()
+        assert data["success"] is False
+        assert "Flapping Lockout Active" in data["action_taken"]
+
+def test_remediate_postmortem_generation(tmp_path):
+    from remediator.server import flapping_history
+    flapping_history.clear()
+    
+    payload = {
+        "incident_id": "inc-postmortem-test",
+        "hypothesis": "High CPU load on backend",
+        "confidence": 0.85,
+        "recommended_action": "scale",
+        "requires_human_approval": False,
+        "reasoning": "backend CPU usage > 90%",
+        "replicas": 5
+    }
+    
+    mock_action_result = ActionResult(
+        success=True,
+        action_taken="Scaled replicas to 5",
+        duration_seconds=1.5
+    )
+
+    with patch("remediator.server.scale_deployment", return_value=mock_action_result), \
+         patch("remediator.postmortem.os.makedirs") as mock_makedirs, \
+         patch("builtins.open", create=True) as mock_open:
+        
+        response = client.post("/remediate", json=payload)
+        assert response.status_code == 200
+        assert mock_makedirs.called
+        assert mock_open.called
+

@@ -26,9 +26,12 @@ async def investigate(alert: Alert):
     """Triggers the multi-agent LangGraph workflow to diagnose a Kubernetes incident."""
     logger.info("Received alert for diagnostic investigation", alert_id=alert.id, service=alert.service)
     
+    import uuid
+    incident_id = f"inc-{str(uuid.uuid4())[:8]}"
+    
     # Initialize the input state
     initial_state: AgentState = {
-        "incident_id": "",
+        "incident_id": incident_id,
         "alert": alert,
         "detective_findings": None,
         "topologist_findings": None,
@@ -40,10 +43,10 @@ async def investigate(alert: Alert):
     }
     
     try:
-        # Execute LangGraph workflow synchronously
-        final_state = await graph.ainvoke(initial_state)
+        # Execute LangGraph workflow synchronously with SQLite persistence config
+        config = {"configurable": {"thread_id": incident_id}}
+        final_state = await graph.ainvoke(initial_state, config=config)
         
-        incident_id = final_state.get("incident_id", "unknown")
         hypothesis = final_state.get("hypothesis") or "Unknown failure mode"
         confidence = final_state.get("confidence") or 0.0
         recommended_action = final_state.get("recommended_action") or "none"
@@ -79,6 +82,12 @@ async def investigate(alert: Alert):
             },
             {
                 "step": 5,
+                "agent": "log_analyser",
+                "findings": final_state.get("log_findings"),
+                "action": "Scraped and parsed active container logs for unhandled exceptions."
+            },
+            {
+                "step": 6,
                 "agent": "supervisor_synthesize",
                 "action": "Fused multiple diagnostic findings into root cause hypothesis.",
                 "hypothesis": hypothesis,

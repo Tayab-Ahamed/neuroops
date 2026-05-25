@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     detective_findings: Optional[Dict[str, Any]]
     topologist_findings: Optional[Dict[str, Any]]
     historian_findings: Optional[Dict[str, Any]]
+    log_findings: Optional[Dict[str, Any]]
     hypothesis: Optional[str]
     confidence: Optional[float]
     recommended_action: Optional[str]

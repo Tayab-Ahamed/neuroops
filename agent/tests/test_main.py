@@ -32,12 +32,13 @@ def test_investigate_endpoint_success():
     assert trace_response.status_code == 200
     
     trace_data = trace_response.json()
-    assert len(trace_data) == 5
+    assert len(trace_data) == 6
     assert trace_data[0]["agent"] == "supervisor_init"
     assert trace_data[1]["agent"] == "detective"
     assert trace_data[2]["agent"] == "topologist"
     assert trace_data[3]["agent"] == "historian"
-    assert trace_data[4]["agent"] == "supervisor_synthesize"
+    assert trace_data[4]["agent"] == "log_analyser"
+    assert trace_data[5]["agent"] == "supervisor_synthesize"
 
 def test_get_trace_endpoint_not_found():
     response = client.get("/incidents/inc-missing/trace")

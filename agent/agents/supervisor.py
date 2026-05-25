@@ -26,14 +26,16 @@ async def supervisor_init_node(state: AgentState) -> dict:
 
 @traced_node("supervisor_synthesize")
 async def supervisor_synthesize_node(state: AgentState) -> dict:
-    """Synthesizes findings from Detective, Topologist, and Historian nodes to form a Root Cause Hypothesis."""
+    """Synthesizes findings from Detective, Topologist, Historian, and Log Triage nodes to form a Root Cause Hypothesis."""
     alert = state["alert"]
     detective = state.get("detective_findings") or {}
     topologist = state.get("topologist_findings") or {}
     historian = state.get("historian_findings") or {}
+    logs = state.get("log_findings") or {}
     
-    # Check for keys. If missing, return mock findings for local test execution
-    if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+    from agents.llm import get_llm
+    llm = get_llm()
+    if llm is None:
         # Synthesize logic based on mock inputs
         suspect = historian.get("suspect_commit")
         action = "none"
@@ -50,23 +52,14 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
             requires_human = False
             
         return {
-            "hypothesis": f"Anomaly on '{alert.service}' caused by bottleneck in '{topologist.get('bottleneck')}' and suspect commit '{suspect}'.",
+            "hypothesis": f"Anomaly on '{alert.service}' caused by bottleneck in '{topologist.get('bottleneck')}' and suspect commit '{suspect}'. Logs show: {logs.get('suspect_stack_trace', 'none')}",
             "confidence": confidence,
             "recommended_action": action,
             "requires_human_approval": requires_human,
-            "reasoning": f"Synthesized reasoning: Detective blamed '{detective.get('likely_origin')}', Topologist saw bottleneck '{topologist.get('bottleneck')}', Historian flagged commit '{suspect}'.",
+            "reasoning": f"Synthesized reasoning: Detective blamed '{detective.get('likely_origin')}', Topologist saw bottleneck '{topologist.get('bottleneck')}', Historian flagged commit '{suspect}', Logs flagged '{logs.get('reasoning')}'.",
             "tool_called": "none",
             "tokens_used": 1500
         }
-
-    # Initialize LangChain LLM
-    from langchain_anthropic import ChatAnthropic
-    from langchain_openai import ChatOpenAI
-    
-    if os.getenv("ANTHROPIC_API_KEY"):
-        llm = ChatAnthropic(model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), temperature=0)
-    else:
-        llm = ChatOpenAI(model="gpt-4o", temperature=0)
         
     messages = [
         HumanMessage(content=(
@@ -82,10 +75,13 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
             f"{topologist}\n\n"
             f"4. HISTORIAN FINDINGS (GitHub Deployments):\n"
             f"{historian}\n\n"
+            f"5. LOG TRIAGE FINDINGS (Container Logs):\n"
+            f"{logs}\n\n"
             f"Synthesize this diagnostic information into a Root Cause Hypothesis.\n"
             f"Refer to the Remediation Decision Tree:\n"
             f"- If there's a recent suspect commit within last 60 minutes and service is failing/restarting: Recommend 'rollback'\n"
             f"- If high CPU/OOMKill/Memory saturation: Recommend 'scale' or 'restart'\n"
+            f"- If log findings show database deadlocks or query failures: Recommend 'restart' or 'scale'\n"
             f"- Destructive actions (like rollback) always require human approval (requires_human_approval = True)\n"
             f"- If confidence < 0.6: Set recommended_action to 'none', requires_human_approval = True\n\n"
             f"Emit the final synthesized findings structured schema."

@@ -11,13 +11,18 @@
 
 ## 🚀 Core Capabilities
 
-* **Multivariate Anomaly Detection:** Scrapes Prometheus metrics at a 15-second resolution and executes unsupervised **Isolation Forest** models to identify real-time metric anomalies.
+* **Multivariate Anomaly Detection:** Scrapes Prometheus metrics at a 15-second resolution and executes unsupervised **Isolation Forest** models paired with a closed-form sequential **Ridge Regression Forecaster** (using Scikit-Learn/NumPy) to validate sequential temporal trends and filter point anomalies.
 * **LangGraph Multi-Agent Diagnosis:** Combines specialized SRE agents in a parallel diagnostic workflow:
   - **Detective Agent:** Performs Prometheus metric correlation.
   - **Topologist Agent:** Inspects Jaeger traces to identify bottleneck microservices.
   - **Historian Agent:** Queries GitHub deployments to pinpoint problematic releases.
-  - **Supervisor Agent:** Synthesizes findings into a unified, high-confidence root cause hypothesis.
-* **Closed-Loop Auto-Remediation:** Evaluates supervisor hypotheses and automatically maps incidents to precise remediation actions (pod restarts, deployment rollbacks, ConfigMap patches, replica scaling, or opening GitHub PRs) using an approval-gated human-in-the-loop CLI for high-impact situations.
+  - **Log Triage Agent:** Queries pod container logs to identify stack traces, deadlocks, and specific database/network failures (completing the "Three Pillars of Observability" loop).
+  - **Supervisor Agent:** Synthesizes metrics, traces, deployment histories, and logs into a unified, high-confidence root cause hypothesis.
+* **Safety-Gated Auto-Remediation:** Maps RCA hypotheses to precise remediation actions (pod restarts, deployment rollbacks, ConfigMap patches, replica scaling, or opening GitHub PRs). Integrates:
+  - **Anti-Flapping Guardrails:** Enforces a strict lockout of max 2 actions per service in a 10-minute sliding window to suspend autonomous recovery and escalate to human operators if flapping is detected.
+  - **Canary Gates:** Logs safety-gated verification steps to validate single-pod stability before committing scale-ups or configuration patches.
+  - **Interactive ChatOps:** Sends Slack notification cards with interactive **[Approve]** and **[Reject]** buttons parsed via a zero-dependency POST callback interface.
+* **Automated Post-Mortem RCA Reports:** Automatically creates and persists beautifully structured SRE Post-Mortem Markdown reports under `/postmortems/` upon resolution, tracking MTTR, action details, confidence scores, and avoided manual costs.
 * **Self-Observability Layer:** Exports internal agent execution details (latency, tokens used, decisions, tool calls) as OpenTelemetry spans directly to Jaeger/Grafana, correlating agent logic with system telemetry using a unique `incident_id`.
 * **Chaos Engineering Benchmarks:** Features a robust test runner executing **five distinct chaos scenarios** via LitmusChaos to benchmark recovery latencies and compare automated MTTR against manual engineering baselines.
 

@@ -45,7 +45,7 @@ async def test_full_graph_execution_mock_path(monkeypatch):
         "requires_human_approval": False
     }
     
-    final_state = await graph.ainvoke(initial_state)
+    final_state = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": "test-thread"}})
     
     # Assert nodes ran and updated state
     assert final_state["incident_id"].startswith("inc-")
@@ -92,7 +92,7 @@ async def test_remediation_path(monkeypatch):
             "requires_human_approval": False
         }
         
-        final_state = await graph.graph.ainvoke(initial_state)
+        final_state = await graph.graph.ainvoke(initial_state, config={"configurable": {"thread_id": "test-thread-rem"}})
         
         assert final_state["confidence"] == 0.70
         assert final_state["recommended_action"] == "restart"

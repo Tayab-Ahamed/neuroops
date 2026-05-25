@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: neuroops-agent-sa
+  namespace: neuroops-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: neuroops-agent-role
+  namespace: neuroops-demo
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "configmaps", "services", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/rollback", "deployments/scale"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["delete"]  # For pod restart remediation
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["patch", "update"]  # For replica scaling and deployment rollback
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["patch", "update"]  # For log rotation ConfigMap patches
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: neuroops-agent-rolebinding
+  namespace: neuroops-demo
+subjects:
+- kind: ServiceAccount
+  name: neuroops-agent-sa
+  namespace: neuroops-demo
+roleRef:
+  kind: Role
+  name: neuroops-agent-role
+  apiGroup: rbac.authorization.k8s.io
