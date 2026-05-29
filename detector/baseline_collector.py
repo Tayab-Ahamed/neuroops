@@ -6,6 +6,7 @@ from typing import List, Dict
 import structlog
 from scraper import PrometheusScraper, MetricWindow
 from models.isolation_forest import IsolationForestModel
+from models.lstm import LSTMAnomalyModel
 
 # Configure standard console logging
 structlog.configure(
@@ -133,10 +134,11 @@ def collect_historical_baseline(scraper: PrometheusScraper, minutes: int = 30, s
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Collect baseline Prometheus metrics and train Isolation Forest models.")
+    parser = argparse.ArgumentParser(description="Collect baseline Prometheus metrics and train anomaly models.")
     parser.add_argument("--minutes", type=int, default=30, help="Baseline collection window in minutes (default: 30)")
     parser.add_argument("--step", type=int, default=15, help="Query step interval in seconds (default: 15)")
     parser.add_argument("--output", type=str, default="checkpoints/isolation_forest.joblib", help="Model output file path")
+    parser.add_argument("--lstm-output", type=str, default="checkpoints/lstm_model.pt", help="Sequential model output file path")
     args = parser.parse_args()
 
     scraper = PrometheusScraper()
@@ -151,10 +153,13 @@ def main():
     # Train the Isolation Forest models
     model = IsolationForestModel()
     model.fit(windows)
-    
-    # Save checkpoints
     model.save(args.output)
-    logger.info("Baseline model training completed successfully!", saved_path=args.output)
+
+    # Train the sequential verification model
+    lstm_model = LSTMAnomalyModel()
+    lstm_model.fit(windows)
+    lstm_model.save(args.lstm_output)
+    logger.info("Baseline model training completed successfully!", saved_path=args.output, lstm_saved_path=args.lstm_output)
 
 if __name__ == "__main__":  # pragma: no cover
     main()

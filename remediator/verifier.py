@@ -29,7 +29,7 @@ def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 
         logger.info("verifier: Test approval override detected, bypassing HTTP call", alert_id=alert_id)
         return True
 
-    detector_url = os.getenv("DETECTOR_URL", "http://localhost:8000")
+    detector_url = os.getenv("DETECTOR_URL", "http://localhost:8001")
     logger.info("verifier: Starting incident resolution check", alert_id=alert_id, service=service, detector=detector_url, timeout=timeout_seconds)
     
     start_time = time.time()

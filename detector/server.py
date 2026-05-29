@@ -2,13 +2,57 @@ import os
 import asyncio
 from typing import List, Dict
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
 import structlog
 from scraper import PrometheusScraper, MetricWindow
 from models.isolation_forest import IsolationForestModel
 from models.lstm import LSTMAnomalyModel
 from alerter import Alerter, Alert
 from baseline_collector import collect_historical_baseline
+from correlator import AlertCorrelator, CorrelatedAlert
+
+# Prometheus metrics instrumentation
+try:
+    from prometheus_client import (
+        Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST,
+        CollectorRegistry
+    )
+    _prom_registry = CollectorRegistry()
+    ALERTS_ACTIVE = Gauge(
+        "neuroops_alerts_active_total",
+        "Number of currently active alerts in the detector",
+        registry=_prom_registry,
+    )
+    ANOMALY_SCORE = Histogram(
+        "neuroops_anomaly_score",
+        "Distribution of anomaly scores produced by IsolationForest",
+        buckets=[-1.0, -0.8, -0.6, -0.4, -0.2, 0.0],
+        registry=_prom_registry,
+    )
+    SCRAPE_ERRORS = Counter(
+        "neuroops_scrape_errors_total",
+        "Total number of Prometheus scrape errors",
+        registry=_prom_registry,
+    )
+    MODEL_LOADED = Gauge(
+        "neuroops_model_loaded",
+        "1 if IsolationForest model is loaded, 0 otherwise",
+        registry=_prom_registry,
+    )
+    LSTM_LOADED_GAUGE = Gauge(
+        "neuroops_lstm_model_loaded",
+        "1 if LSTM/Ridge model is loaded, 0 otherwise",
+        registry=_prom_registry,
+    )
+    CORRELATED_GROUPS = Gauge(
+        "neuroops_correlated_alert_groups",
+        "Number of correlated alert groups currently active",
+        registry=_prom_registry,
+    )
+    _prom_enabled = True
+except ImportError:
+    _prom_enabled = False
+    _prom_registry = None
 
 # Configure standard console logging
 structlog.configure(
@@ -24,6 +68,10 @@ scraper = PrometheusScraper()
 alerter = Alerter()
 model = IsolationForestModel()
 lstm_model = LSTMAnomalyModel()
+correlator = AlertCorrelator(
+    correlation_window_seconds=float(os.getenv("CORRELATION_WINDOW_SECONDS", "30")),
+    max_age_seconds=float(os.getenv("CORRELATION_MAX_AGE_SECONDS", "300")),
+)
 
 # Active alert registry
 active_alerts: List[Alert] = []
@@ -83,6 +131,10 @@ async def background_scraping_loop():
                     # Run IsolationForest Anomaly detection
                     anomaly_score = model.score(window)
                     is_anomaly = model.predict(window)
+
+                    # Update Prometheus anomaly score histogram
+                    if _prom_enabled:
+                        ANOMALY_SCORE.observe(anomaly_score)
                     
                     # Run LSTM temporal verification
                     is_lstm_anomaly = False
@@ -103,6 +155,15 @@ async def background_scraping_loop():
                             active_alerts.pop(0)
                 else:
                     logger.info("Scraping loop in Warmup Mode - skipping anomaly scoring", service=service)
+
+            # Feed active alerts into correlator and update Prometheus gauges
+            correlator.ingest(active_alerts)
+            if _prom_enabled:
+                ALERTS_ACTIVE.set(len(active_alerts))
+                corr_groups = correlator.correlate()
+                CORRELATED_GROUPS.set(len(corr_groups))
+                MODEL_LOADED.set(1 if model_loaded else 0)
+                LSTM_LOADED_GAUGE.set(1 if lstm_loaded else 0)
                     
         except Exception as e:
             logger.error("Error in background scraping loop", error=str(e))
@@ -128,13 +189,48 @@ async def get_alerts():
     """Returns the list of active/fired alerts."""
     return active_alerts
 
+
+@app.get("/alerts/correlated", response_model=List[CorrelatedAlert])
+async def get_correlated_alerts():
+    """
+    Returns alerts grouped into correlated groups by temporal proximity.
+    Groups that affect multiple services are flagged as is_cascading_failure=True.
+    This eliminates redundant RCA investigations for the same root cause.
+    """
+    correlator.ingest(active_alerts)
+    return correlator.correlate()
+
+
+@app.get("/alerts/correlation-stats")
+async def get_correlation_stats():
+    """Returns diagnostic statistics about the alert correlator state."""
+    correlator.ingest(active_alerts)
+    return correlator.get_correlation_stats()
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Exposes Prometheus-format metrics for scraping by Grafana / kube-prometheus."""
+    if not _prom_enabled:
+        return Response(
+            content="# prometheus_client not installed",
+            media_type="text/plain",
+        )
+    return Response(
+        content=generate_latest(_prom_registry),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
+
 @app.get("/health")
 async def get_health():
     """Returns service health status and model availability."""
     return {
         "status": "ok",
         "model_loaded": model_loaded,
-        "active_alerts_count": len(active_alerts)
+        "lstm_loaded": lstm_loaded,
+        "active_alerts_count": len(active_alerts),
+        "correlation_stats": correlator.get_correlation_stats(),
     }
 
 def run_async_training(minutes: int):

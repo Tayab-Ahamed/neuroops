@@ -1,9 +1,10 @@
 import os
 import time
-import asyncio
 from typing import Callable, Any
+from functools import wraps
 import structlog
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -40,6 +41,7 @@ llm_retry = retry(
 def traced_node(agent_name: str) -> Callable:
     """Decorator to trace a LangGraph agent node's execution in an OpenTelemetry span."""
     def decorator(func: Callable) -> Callable:
+        @wraps(func)
         async def wrapper(state: Any, *args, **kwargs) -> Any:
             incident_id = state.get("incident_id", "unknown")
             logger.info("Executing agent node", agent=agent_name, incident_id=incident_id)
@@ -53,7 +55,7 @@ def traced_node(agent_name: str) -> Callable:
                     result = await func(state, *args, **kwargs)
                 except Exception as e:
                     span.record_exception(e)
-                    span.set_status(trace.StatusCode.ERROR, str(e))
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
                     logger.error("Error in agent node execution", agent=agent_name, error=str(e))
                     raise e
                 

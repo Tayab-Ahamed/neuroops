@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from remediator.server import app, actions_history, flapping_history, RemediationRequest
+from remediator.server import app, actions_history, flapping_history, RemediationRequest, remediation_store
 from remediator.actions import ActionResult
 
 client = TestClient(app)
@@ -10,11 +10,19 @@ client = TestClient(app)
 def clear_history():
     actions_history.clear()
     flapping_history.clear()
+    remediation_store.clear()
 
 def test_get_actions_empty():
     response = client.get("/actions")
     assert response.status_code == 200
     assert response.json() == []
+
+def test_health_endpoint():
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "actions_count" in data
 
 def test_remediate_none_action():
     payload = {
@@ -203,6 +211,33 @@ def test_remediate_p2_human_approval_approved():
         assert mock_prompt.called
         mock_rollback.assert_called_with(namespace="neuroops-demo", deployment_name="backend-deploy")
 
+def test_remediate_p2_auto_approve_skips_prompt():
+    payload = {
+        "incident_id": "inc-rollback-auto-approve",
+        "hypothesis": "Deploy failure on backend",
+        "confidence": 0.89,
+        "recommended_action": "rollback",
+        "requires_human_approval": True,
+        "reasoning": "Suspect deployment found",
+        "deployment_name": "backend-deploy",
+        "auto_approve": True
+    }
+
+    mock_action_result = ActionResult(
+        success=True,
+        action_taken="Rolled back deployment",
+        duration_seconds=3.5
+    )
+
+    with patch("remediator.server.prompt_human") as mock_prompt, \
+         patch("remediator.server.rollback_deployment", return_value=mock_action_result) as mock_rollback:
+        response = client.post("/remediate", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert mock_prompt.called is False
+        mock_rollback.assert_called_with(namespace="neuroops-demo", deployment_name="backend-deploy")
+
 def test_remediate_scale_deployment():
     payload = {
         "incident_id": "inc-scale",
@@ -381,4 +416,3 @@ def test_remediate_postmortem_generation(tmp_path):
         assert response.status_code == 200
         assert mock_makedirs.called
         assert mock_open.called
-

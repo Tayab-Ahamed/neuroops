@@ -86,7 +86,9 @@ class IsolationForestModel:
     def save(self, path: str):
         """Serializes and saves the models dictionary to the specified path."""
         logger.info("Saving IsolationForestModel checkpoints", path=path)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         joblib.dump({
             "contamination": self.contamination,
             "features": self.features,

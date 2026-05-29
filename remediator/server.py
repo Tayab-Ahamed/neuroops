@@ -1,6 +1,6 @@
 import os
 from typing import List, Dict, Any, Optional, Union
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 import structlog
 from kubernetes import client
@@ -14,6 +14,47 @@ from remediator.actions.patch_configmap import patch_configmap
 from remediator.actions.open_github_pr import open_pr
 from remediator.human_loop import prompt_human
 from remediator.verifier import verify_resolution
+from remediator.store import RemediationStore
+
+# Prometheus metrics instrumentation
+try:
+    from prometheus_client import (
+        Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST,
+        CollectorRegistry,
+    )
+    _prom_registry = CollectorRegistry()
+    REMEDIATION_REQUESTS = Counter(
+        "neuroops_remediation_requests_total",
+        "Total number of /remediate requests received",
+        registry=_prom_registry,
+    )
+    REMEDIATION_SUCCESS = Counter(
+        "neuroops_remediation_success_total",
+        "Total number of successful remediation actions",
+        ["action_type"],
+        registry=_prom_registry,
+    )
+    REMEDIATION_FAILURE = Counter(
+        "neuroops_remediation_failure_total",
+        "Total number of failed or rejected remediation actions",
+        ["reason"],
+        registry=_prom_registry,
+    )
+    REMEDIATION_LATENCY = Histogram(
+        "neuroops_remediation_latency_seconds",
+        "Latency of remediation action execution",
+        buckets=[0.5, 1, 5, 10, 30, 60, 120],
+        registry=_prom_registry,
+    )
+    FLAPPING_LOCKOUTS = Counter(
+        "neuroops_flapping_lockouts_total",
+        "Number of times anti-flapping lockout was triggered",
+        registry=_prom_registry,
+    )
+    _prom_enabled = True
+except ImportError:
+    _prom_enabled = False
+    _prom_registry = None
 
 app = FastAPI(title="NeuroOps Remediation Engine API", version="1.0.0")
 
@@ -21,6 +62,7 @@ app = FastAPI(title="NeuroOps Remediation Engine API", version="1.0.0")
 actions_history: List[ActionResult] = []
 # Global registry of remediation execution timestamps per service for anti-flapping
 flapping_history: Dict[str, List[float]] = {}
+remediation_store = RemediationStore()
 
 class AlertModel(BaseModel):
     id: str
@@ -46,6 +88,7 @@ class RemediationRequest(BaseModel):
     replicas: Optional[int] = None
     patch: Optional[Dict[str, Any]] = None
     repo: Optional[str] = None
+    auto_approve: bool = False
 
 def extract_service_name(hypothesis: str, reasoning: str) -> str:
     """Helper to parse affected service name from hypothesis/reasoning text."""
@@ -78,7 +121,7 @@ async def remediate(request: RemediationRequest):
     )
 
     # 1. P2 Check / Human approval loop gate
-    if request.requires_human_approval:
+    if request.requires_human_approval and not request.auto_approve:
         logger.info("Action requires human operator approval, invoking CLI loop", incident_id=request.incident_id)
         # Note: prompt_human runs synchronously to wait for operator input (or timeout)
         approved = prompt_human(request, request.recommended_action)
@@ -89,6 +132,15 @@ async def remediate(request: RemediationRequest):
                 duration_seconds=0.0
             )
             actions_history.append(result)
+            remediation_store.record_action(
+                incident_id=request.incident_id,
+                service=extract_service_name(request.hypothesis, request.reasoning),
+                action_type=request.recommended_action.lower(),
+                success=result.success,
+                action_taken=result.action_taken,
+                duration_seconds=result.duration_seconds,
+                metadata={"requires_human_approval": True, "auto_approve": False, "rejected": True},
+            )
             return result
 
     # 2. Extract service and configurations
@@ -102,19 +154,30 @@ async def remediate(request: RemediationRequest):
     import time
     now = time.time()
     if service not in flapping_history:
-        flapping_history[service] = []
+        flapping_history[service] = remediation_store.recent_success_timestamps(service, within_seconds=600.0)
         
     # Purge historical entries older than 10 minutes (600 seconds)
     flapping_history[service] = [t for t in flapping_history[service] if now - t < 600.0]
     
     if len(flapping_history[service]) >= 2:
         logger.warn("Anti-Flapping Lockout active on service!", service=service, action_count=len(flapping_history[service]))
+        if _prom_enabled:
+            FLAPPING_LOCKOUTS.inc()
         result = ActionResult(
             success=False,
             action_taken=f"Rejected: Flapping Lockout Active on service '{service}'. Maximum auto-remediation rate exceeded (2 actions / 10m). Autonomous recovery suspended; escalated to human SRE.",
             duration_seconds=0.0
         )
         actions_history.append(result)
+        remediation_store.record_action(
+            incident_id=request.incident_id,
+            service=service,
+            action_type=action_type,
+            success=result.success,
+            action_taken=result.action_taken,
+            duration_seconds=result.duration_seconds,
+            metadata={"requires_human_approval": request.requires_human_approval, "blocked_by": "flapping_lockout"},
+        )
         
         # Still generate a post-mortem report for the blocked action!
         from remediator.postmortem import generate_postmortem
@@ -146,6 +209,15 @@ async def remediate(request: RemediationRequest):
         generate_postmortem(request, result)
         
         actions_history.append(result)
+        remediation_store.record_action(
+            incident_id=request.incident_id,
+            service=service,
+            action_type=action_type,
+            success=result.success,
+            action_taken=result.action_taken,
+            duration_seconds=result.duration_seconds,
+            metadata={"dry_run": True, "requires_human_approval": request.requires_human_approval},
+        )
         return result
 
     result = None
@@ -218,6 +290,12 @@ async def remediate(request: RemediationRequest):
     # Record execution timestamp for flapping registry on success
     if result.success:
         flapping_history[service].append(time.time())
+        if _prom_enabled:
+            REMEDIATION_SUCCESS.labels(action_type=action_type).inc()
+            REMEDIATION_LATENCY.observe(result.duration_seconds)
+    elif not result.success:
+        if _prom_enabled:
+            REMEDIATION_FAILURE.labels(reason="action_failed").inc()
         
     # Generate Post-Mortem RCA Report
     from remediator.postmortem import generate_postmortem
@@ -225,13 +303,55 @@ async def remediate(request: RemediationRequest):
 
     # Record action history
     actions_history.append(result)
+    remediation_store.record_action(
+        incident_id=request.incident_id,
+        service=service,
+        action_type=action_type,
+        success=result.success,
+        action_taken=result.action_taken,
+        duration_seconds=result.duration_seconds,
+        metadata={
+            "requires_human_approval": request.requires_human_approval,
+            "auto_approve": request.auto_approve,
+            "namespace": namespace,
+        },
+    )
     logger.info("Remediation execution completed", success=result.success, action_taken=result.action_taken)
     return result
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "actions_count": len(remediation_store.list_actions(limit=1000)),
+        "k8s_configured": k8s_configured,
+    }
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Exposes Prometheus-format metrics for scraping by Grafana / kube-prometheus."""
+    if not _prom_enabled:
+        return Response(content="# prometheus_client not installed", media_type="text/plain")
+    return Response(
+        content=generate_latest(_prom_registry),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 @app.get("/actions", response_model=List[ActionResult])
 async def get_actions():
     """Returns the history of all remediation actions executed."""
-    return actions_history
+    if actions_history:
+        return actions_history
+    persisted = remediation_store.list_actions()
+    return [
+        ActionResult(
+            success=item["success"],
+            action_taken=item["action_taken"],
+            duration_seconds=item["duration_seconds"],
+        )
+        for item in persisted
+    ]
 
 from fastapi import Request
 import urllib.parse

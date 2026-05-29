@@ -114,7 +114,9 @@ class LSTMAnomalyModel:
     def save(self, path: str):
         """Saves weights and parameters of all service models."""
         logger.info("Saving sequence models checkpoint", path=path)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         joblib.dump({
             "thresholds": self.thresholds,
             "features": self.features,

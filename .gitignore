@@ -20,16 +20,15 @@ ENV/
 .coverage.*
 htmlcov/
 .pytest_cache/
+.pytest-tmp-*/
 .tox/
 *.cover
 
 # Trained ML model artifacts (regenerated via `make baseline`)
-detector/models/*.joblib
-checkpoints/
-
-# Benchmark outputs (regenerated via `make bench`)
-benchmarks/results.json
-benchmarks/REPORT.md
+checkpoints/*.joblib
+checkpoints/*.pt
+checkpoints/*.db
+checkpoints/*.db-journal
 
 # Environment secrets — NEVER commit
 .env
@@ -48,5 +47,5 @@ Thumbs.db
 # Antigravity agent workspace
 .antigravity/
 
-# Incident post-mortems (runtime artifacts)
+# Incident post-mortems (runtime artifacts — generated on incident resolution)
 postmortems/

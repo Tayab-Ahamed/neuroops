@@ -1,3 +1,5 @@
+import os
+import httpx
 import structlog
 from langgraph.graph import StateGraph, START, END
 from state import AgentState
@@ -18,9 +20,50 @@ async def human_escalation_node(state: AgentState) -> dict:
 
 @traced_node("remediator")
 async def remediator_node(state: AgentState) -> dict:
-    """Stub node for remediation action mapping in subsequent phases."""
-    logger.info("Incident routed to remediation engine", incident_id=state.get("incident_id"))
-    return {"requires_human_approval": False}
+    """Optionally dispatches remediation to the remediator service."""
+    incident_id = state.get("incident_id")
+    logger.info("Incident routed to remediation engine", incident_id=incident_id)
+
+    if not state.get("execute_remediation"):
+        return {
+            "requires_human_approval": False,
+            "remediation_result": {
+                "status": "planned",
+                "message": "Remediation execution disabled for this investigation request.",
+            },
+        }
+
+    remediator_url = os.getenv("REMEDIATOR_URL", "http://localhost:8003")
+    payload = {
+        "incident_id": incident_id,
+        "hypothesis": state.get("hypothesis") or "Unknown failure mode",
+        "confidence": state.get("confidence") or 0.0,
+        "recommended_action": state.get("recommended_action") or "none",
+        "requires_human_approval": state.get("requires_human_approval") or False,
+        "reasoning": state.get("reasoning") or "No reasoning provided.",
+        "alert": state["alert"].model_dump(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(f"{remediator_url}/remediate", json=payload)
+        response.raise_for_status()
+        return {
+            "requires_human_approval": bool(payload["requires_human_approval"]),
+            "remediation_result": response.json(),
+        }
+    except Exception as exc:
+        logger.warning(
+            "Remediation dispatch failed, falling back to planned response",
+            incident_id=incident_id,
+            error=str(exc),
+        )
+        return {
+            "requires_human_approval": True,
+            "remediation_result": {
+                "status": "dispatch_failed",
+                "message": str(exc),
+            },
+        }
 
 def route_based_on_confidence(state: AgentState) -> str:
     """Routes execution flow based on diagnostic confidence and safety thresholds."""

@@ -60,6 +60,8 @@ async def data():
                     "processed_by": "backend",
                     "database_data": db_data
                 }
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error calling database stub: {str(e)}")
                 span.record_exception(e)

@@ -207,6 +207,7 @@ def execute_run(
     # State variables for latencies
     t1: Optional[float] = None
     t2: Optional[float] = None
+    t2_rca_end: Optional[float] = None
     t3: Optional[float] = None
     
     # Values extracted from agent and remediator runs
@@ -216,6 +217,7 @@ def execute_run(
     remediator_success = False
     autonomous = True
     alert_obj: Dict[str, Any] = {}
+    incident_id = f"inc-{scenario}-{run_number}"
 
     # Total timeout: 10 minutes (600s)
     timeout_duration = 600.0
@@ -280,6 +282,7 @@ def execute_run(
             autonomous = confidence >= 0.6
             tokens_used = 4200
             hypothesis = f"RCA Hypothesis for '{scenario}': target pod failure"
+            t2_rca_end = t2_start + 2.0
             progress.update(rca_task, completed=100, description="[green]✓ RCA Finished (Mock)[/green]")
         else:
             try:
@@ -287,10 +290,12 @@ def execute_run(
                     response = client.post(f"{agent_url}/investigate", json=alert_obj)
                     if response.status_code == 200:
                         hypothesis_data = response.json()
+                        incident_id = hypothesis_data.get("incident_id", incident_id)
                         hypothesis = hypothesis_data.get("hypothesis", "Unknown")
                         confidence = hypothesis_data.get("confidence", 0.0)
                         autonomous = not hypothesis_data.get("requires_human_approval", False)
                         tokens_used = hypothesis_data.get("tokens_used", 5000)  # Read from API or fall back
+                        t2_rca_end = time.time()
                         progress.update(rca_task, completed=100, description="[green]✓ RCA Finished[/green]")
                     else:
                         progress.update(rca_task, description="[red]✗ RCA Failed[/red]")
@@ -314,7 +319,7 @@ def execute_run(
         recommended_action = action_map[scenario]
 
         remediation_payload = {
-            "incident_id": f"inc-{scenario}-{run_number}",
+            "incident_id": incident_id,
             "hypothesis": hypothesis,
             "confidence": confidence,
             "recommended_action": recommended_action,
@@ -322,7 +327,8 @@ def execute_run(
             "reasoning": f"Chaos incident triggers action {recommended_action}.",
             "alert": alert_obj,
             "namespace": "neuroops-demo",
-            "replicas": 3 if scenario in ("cpu-hog", "memory-hog") else None
+            "replicas": 3 if scenario in ("cpu-hog", "memory-hog") else None,
+            "auto_approve": not autonomous,
         }
 
         if is_mock:
@@ -333,11 +339,6 @@ def execute_run(
             progress.update(remediator_task, completed=100, description="[green]✓ Remediation Applied (Mock)[/green]")
         else:
             try:
-                # Signal the remediator whether human approval has been bypassed
-                if not autonomous:
-                    os.environ["REMEDIATOR_TEST_APPROVAL"] = "true"
-                else:
-                    os.environ.pop("REMEDIATOR_TEST_APPROVAL", None)
                 with httpx.Client(timeout=180.0) as client:
                     response = client.post(f"{remediator_url}/remediate", json=remediation_payload)
                     if response.status_code == 200:
@@ -397,7 +398,7 @@ def execute_run(
     # diag_lat: time from alert → RCA agent finishes (t2_start marks agent call start, t1 marks alert fire)
     # rem_lat: time from RCA start → remediation action taken
     det_lat = max(0.0, t1 - t0)
-    diag_lat = max(0.0, t2_start - t1)
+    diag_lat = max(0.0, (t2_rca_end or t2_start) - t1)
     rem_lat = max(0.0, t2 - t2_start)
     tot_mttr = max(0.0, t3 - t0)
 

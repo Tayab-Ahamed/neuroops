@@ -20,3 +20,7 @@ class AgentState(TypedDict):
     confidence: Optional[float]
     recommended_action: Optional[str]
     requires_human_approval: bool
+    reasoning: Optional[str]
+    tokens_used: Optional[int]
+    execute_remediation: bool
+    remediation_result: Optional[Dict[str, Any]]

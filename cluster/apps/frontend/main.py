@@ -59,6 +59,8 @@ async def root():
                     "message": "Hello from NeuroOps Frontend!",
                     "backend_response": backend_data
                 }
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error calling backend: {str(e)}")
                 span.record_exception(e)

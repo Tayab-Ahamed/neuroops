@@ -91,7 +91,8 @@ async def log_analyser_node(state: AgentState) -> dict:
             tool_result = tool_inst.invoke(tool_args)
             messages.append(ToolMessage(
                 content=str(tool_result),
-                tool_call_id=tool_call["id"]
+                tool_call_id=tool_call["id"],
+                name=tool_name
             ))
             
     # Structured response
