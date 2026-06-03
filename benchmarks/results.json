@@ -6,7 +6,7 @@
     "detection_latency": 15.0,
     "diagnosis_latency": 0.0,
     "remediation_latency": 25.0,
-    "total_mttr": 35.002293825149536,
+    "total_mttr": 35.00258803367615,
     "tokens_used": 4200,
     "confidence": 0.85,
     "autonomous": true,

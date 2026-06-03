@@ -1,22 +1,27 @@
 import os
+
 import httpx
 import structlog
-from langgraph.graph import StateGraph, START, END
-from state import AgentState
-from agents.supervisor import supervisor_init_node, supervisor_synthesize_node
 from agents.detective import detective_node
-from agents.topologist import topologist_node
 from agents.historian import historian_node
 from agents.log_analyser import log_analyser_node
+from agents.supervisor import supervisor_init_node, supervisor_synthesize_node
+from agents.topologist import topologist_node
+from langgraph.graph import END, START, StateGraph
+from state import AgentState
 from tracing import traced_node
 
 logger = structlog.get_logger()
 
+
 @traced_node("human_escalation")
 async def human_escalation_node(state: AgentState) -> dict:
     """Escalates the incident to human SRE operators due to low confidence or high risk."""
-    logger.warning("Incident diagnosis escalated to human operator", incident_id=state.get("incident_id"))
+    logger.warning(
+        "Incident diagnosis escalated to human operator", incident_id=state.get("incident_id")
+    )
     return {"requires_human_approval": True}
+
 
 @traced_node("remediator")
 async def remediator_node(state: AgentState) -> dict:
@@ -65,16 +70,18 @@ async def remediator_node(state: AgentState) -> dict:
             },
         }
 
+
 def route_based_on_confidence(state: AgentState) -> str:
     """Routes execution flow based on diagnostic confidence and safety thresholds."""
     confidence = state.get("confidence") or 0.0
     requires_human = state.get("requires_human_approval") or False
-    
+
     logger.info("Routing decision", confidence=confidence, requires_human_approval=requires_human)
     if confidence < 0.6 or requires_human:
         return "escalate"
-        
+
     return "remediate"
+
 
 # Assemble the StateGraph workflow
 workflow = StateGraph(AgentState)
@@ -108,10 +115,7 @@ workflow.add_edge("log_analyser", "supervisor_synthesize")
 workflow.add_conditional_edges(
     "supervisor_synthesize",
     route_based_on_confidence,
-    {
-        "escalate": "human_escalation",
-        "remediate": "remediator"
-    }
+    {"escalate": "human_escalation", "remediate": "remediator"},
 )
 
 # Connect stubs to END node
@@ -120,5 +124,6 @@ workflow.add_edge("remediator", END)
 
 # Compile LangGraph with in-memory checkpointer for persistence
 from langgraph.checkpoint.memory import MemorySaver
+
 memory = MemorySaver()
 graph = workflow.compile(checkpointer=memory)

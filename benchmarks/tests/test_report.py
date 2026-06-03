@@ -1,17 +1,20 @@
-import os
 import json
-import pytest
+import os
 from unittest.mock import patch
-from benchmarks.report import generate_ascii_bar, compile_report
+
+from benchmarks.report import compile_report, generate_ascii_bar
+
 
 # 1. Test generate_ascii_bar
 def test_generate_ascii_bar_normal():
     bar = generate_ascii_bar(10, 20, width=10)
     assert bar == "█████░░░░░"
 
+
 def test_generate_ascii_bar_zero_max():
     bar = generate_ascii_bar(10, 0, width=10)
     assert bar == "░" * 10
+
 
 def test_generate_ascii_bar_negative_max():
     bar = generate_ascii_bar(10, -5, width=10)
@@ -30,7 +33,7 @@ def test_compile_report_empty_list(tmp_path):
     temp_json = tmp_path / "empty_results.json"
     with open(temp_json, "w") as f:
         json.dump([], f)
-        
+
     with patch("benchmarks.report.logger") as mock_logger:
         compile_report(str(temp_json))
         assert mock_logger.warning.called
@@ -52,7 +55,7 @@ def test_compile_report_success(tmp_path):
             "autonomous": True,
             "action_taken": "Restarted",
             "remediator_success": True,
-            "error_message": ""
+            "error_message": "",
         },
         {
             "scenario": "pod-delete",
@@ -67,7 +70,7 @@ def test_compile_report_success(tmp_path):
             "autonomous": True,
             "action_taken": "Restarted",
             "remediator_success": True,
-            "error_message": ""
+            "error_message": "",
         },
         {
             "scenario": "cpu-hog",
@@ -82,7 +85,7 @@ def test_compile_report_success(tmp_path):
             "autonomous": False,
             "action_taken": "Scaled up",
             "remediator_success": True,
-            "error_message": ""
+            "error_message": "",
         },
         {
             "scenario": "disk-fill",
@@ -97,8 +100,8 @@ def test_compile_report_success(tmp_path):
             "autonomous": False,
             "action_taken": "Cleaned up",
             "remediator_success": True,
-            "error_message": ""
-        }
+            "error_message": "",
+        },
     ]
 
     results_file = tmp_path / "results.json"
@@ -111,9 +114,9 @@ def test_compile_report_success(tmp_path):
 
     # Assert report file exists and contains correct content elements
     assert os.path.exists(report_file)
-    with open(report_file, "r", encoding="utf-8") as f:
+    with open(report_file, encoding="utf-8") as f:
         content = f.read()
-        
+
     assert "# NeuroOps Automated Recovery Benchmark Report" in content
     assert "Executive Summary" in content
     assert "Overall MTTR Improvement" in content
@@ -140,7 +143,7 @@ def test_compile_report_mixed_success_and_failed_scenarios(tmp_path):
             "autonomous": False,
             "action_taken": "none",
             "remediator_success": False,
-            "error_message": "Timeout"
+            "error_message": "Timeout",
         },
         {
             "scenario": "cpu-hog",
@@ -155,23 +158,25 @@ def test_compile_report_mixed_success_and_failed_scenarios(tmp_path):
             "autonomous": False,
             "action_taken": "Scaled up",
             "remediator_success": True,
-            "error_message": ""
-        }
+            "error_message": "",
+        },
     ]
     results_file = tmp_path / "results_mixed.json"
     report_file = tmp_path / "REPORT_mixed.md"
     with open(results_file, "w", encoding="utf-8") as f:
         json.dump(results, f)
-    
+
     compile_report(str(results_file), str(report_file))
     assert os.path.exists(report_file)
 
 
 import runpy
+
+
 def test_report_main_execution(tmp_path):
     temp_json = tmp_path / "results_main.json"
     with open(temp_json, "w", encoding="utf-8") as f:
         json.dump([], f)
-    
+
     with patch("sys.argv", ["benchmarks/report.py", str(temp_json)]):
         runpy.run_path("benchmarks/report.py", run_name="__main__")

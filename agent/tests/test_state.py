@@ -1,4 +1,5 @@
-from state import Alert, AgentState
+from state import AgentState, Alert
+
 
 def test_alert_model():
     alert = Alert(
@@ -7,7 +8,7 @@ def test_alert_model():
         severity="P1",
         timestamp=1716390000.0,
         metric_snapshot={"cpu": 0.8, "memory": 0.9},
-        anomaly_score=-0.65
+        anomaly_score=-0.65,
     )
     assert alert.id == "alert-123"
     assert alert.service == "frontend"
@@ -16,6 +17,7 @@ def test_alert_model():
     assert alert.metric_snapshot["cpu"] == 0.8
     assert alert.anomaly_score == -0.65
 
+
 def test_agent_state_dict():
     alert = Alert(
         id="alert-123",
@@ -23,7 +25,7 @@ def test_agent_state_dict():
         severity="P1",
         timestamp=1716390000.0,
         metric_snapshot={"cpu": 0.8, "memory": 0.9},
-        anomaly_score=-0.65
+        anomaly_score=-0.65,
     )
     state: AgentState = {
         "incident_id": "inc-456",
@@ -34,7 +36,7 @@ def test_agent_state_dict():
         "hypothesis": "Frontend down due to backend commit",
         "confidence": 0.9,
         "recommended_action": "rollback",
-        "requires_human_approval": True
+        "requires_human_approval": True,
     }
     assert state["incident_id"] == "inc-456"
     assert state["alert"].service == "frontend"

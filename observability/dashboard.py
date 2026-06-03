@@ -13,26 +13,22 @@ Usage:
     python observability/dashboard.py --detector-url http://localhost:8001 \
         --agent-url http://localhost:8002 --remediator-url http://localhost:8003
 """
+
 import time
-import os
-import sys
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from datetime import datetime
+from typing import Any
 
 import click
 import httpx
+from rich import box
+from rich.align import Align
+from rich.columns import Columns
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.columns import Columns
-from rich.align import Align
-from rich.rule import Rule
-from rich.spinner import Spinner
-from rich.style import Style
-from rich import box
 
 console = Console()
 
@@ -56,7 +52,8 @@ HEADER_ART = """\
 
 # ── Data Fetchers ──────────────────────────────────────────────────────────────
 
-def safe_get(url: str, timeout: float = 3.0) -> Optional[Any]:
+
+def safe_get(url: str, timeout: float = 3.0) -> Any | None:
     """HTTP GET with timeout, returns None on any error."""
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -67,47 +64,48 @@ def safe_get(url: str, timeout: float = 3.0) -> Optional[Any]:
         return None
 
 
-def fetch_health(base_url: str) -> Dict[str, Any]:
+def fetch_health(base_url: str) -> dict[str, Any]:
     result = safe_get(f"{base_url}/health")
     return result or {"status": "unreachable"}
 
 
-def fetch_alerts(detector_url: str) -> List[Dict[str, Any]]:
+def fetch_alerts(detector_url: str) -> list[dict[str, Any]]:
     result = safe_get(f"{detector_url}/alerts")
     return result if isinstance(result, list) else []
 
 
-def fetch_correlated_alerts(detector_url: str) -> List[Dict[str, Any]]:
+def fetch_correlated_alerts(detector_url: str) -> list[dict[str, Any]]:
     result = safe_get(f"{detector_url}/alerts/correlated")
     return result if isinstance(result, list) else []
 
 
-def fetch_incidents(agent_url: str, limit: int = 8) -> List[Dict[str, Any]]:
+def fetch_incidents(agent_url: str, limit: int = 8) -> list[dict[str, Any]]:
     result = safe_get(f"{agent_url}/incidents?limit={limit}")
     return result if isinstance(result, list) else []
 
 
-def fetch_mttr_stats(agent_url: str) -> Dict[str, Any]:
+def fetch_mttr_stats(agent_url: str) -> dict[str, Any]:
     result = safe_get(f"{agent_url}/analytics/mttr")
     return result or {}
 
 
-def fetch_cost_stats(agent_url: str) -> Dict[str, Any]:
+def fetch_cost_stats(agent_url: str) -> dict[str, Any]:
     result = safe_get(f"{agent_url}/analytics/cost")
     return result or {}
 
 
-def fetch_sla_status(agent_url: str) -> Dict[str, Any]:
+def fetch_sla_status(agent_url: str) -> dict[str, Any]:
     result = safe_get(f"{agent_url}/analytics/sla")
     return result or {}
 
 
-def fetch_actions(remediator_url: str) -> List[Dict[str, Any]]:
+def fetch_actions(remediator_url: str) -> list[dict[str, Any]]:
     result = safe_get(f"{remediator_url}/actions")
     return result if isinstance(result, list) else []
 
 
 # ── Panel Builders ─────────────────────────────────────────────────────────────
+
 
 def build_header() -> Panel:
     """Builds the top header banner panel."""
@@ -123,15 +121,15 @@ def build_header() -> Panel:
 
 
 def build_service_health_panel(
-    detector_health: Dict,
-    agent_health: Dict,
-    remediator_health: Dict,
-    alerts: List[Dict],
+    detector_health: dict,
+    agent_health: dict,
+    remediator_health: dict,
+    alerts: list[dict],
 ) -> Panel:
     """Builds the 3-service health grid."""
     alert_services = {a.get("service", "") for a in alerts}
 
-    def service_status(health: Dict, name: str, port: int) -> Table:
+    def service_status(health: dict, name: str, port: int) -> Table:
         t = Table.grid(padding=(0, 1))
         t.add_column(width=3)
         t.add_column()
@@ -153,7 +151,9 @@ def build_service_health_panel(
         if name == "Detector":
             model_ok = health.get("model_loaded", False)
             alerts_count = health.get("active_alerts_count", 0)
-            t.add_row("", f"Model: {'[green]Loaded[/green]' if model_ok else '[red]Not Loaded[/red]'}")
+            t.add_row(
+                "", f"Model: {'[green]Loaded[/green]' if model_ok else '[red]Not Loaded[/red]'}"
+            )
             t.add_row("", f"Active Alerts: [bold]{alerts_count}[/bold]")
         elif name == "Agent":
             incidents = health.get("persisted_incidents", 0)
@@ -162,28 +162,43 @@ def build_service_health_panel(
             actions = health.get("actions_count", 0)
             k8s = health.get("k8s_configured", False)
             t.add_row("", f"Actions Taken: [bold]{actions}[/bold]")
-            t.add_row("", f"K8s: {'[green]Connected[/green]' if k8s else '[yellow]Mocked[/yellow]'}")
+            t.add_row(
+                "", f"K8s: {'[green]Connected[/green]' if k8s else '[yellow]Mocked[/yellow]'}"
+            )
         return t
 
     cols = Columns(
         [
-            Panel(service_status(detector_health, "Detector", 8001), border_style="dim", padding=(0, 1)),
+            Panel(
+                service_status(detector_health, "Detector", 8001),
+                border_style="dim",
+                padding=(0, 1),
+            ),
             Panel(service_status(agent_health, "Agent", 8002), border_style="dim", padding=(0, 1)),
-            Panel(service_status(remediator_health, "Remediator", 8003), border_style="dim", padding=(0, 1)),
+            Panel(
+                service_status(remediator_health, "Remediator", 8003),
+                border_style="dim",
+                padding=(0, 1),
+            ),
         ],
         equal=True,
     )
     return Panel(cols, title="[bold white]⚡ Service Health Grid[/bold white]", border_style="blue")
 
 
-def build_alerts_panel(alerts: List[Dict], correlated: List[Dict]) -> Panel:
+def build_alerts_panel(alerts: list[dict], correlated: list[dict]) -> Panel:
     """Builds the active alerts panel."""
     if not alerts:
         content = Align.center(
             Text("\n  ✅  No active alerts — all systems nominal\n", style="bold green"),
             vertical="middle",
         )
-        return Panel(content, title="[bold white]🚨 Active Alerts[/bold white]", border_style="green", height=10)
+        return Panel(
+            content,
+            title="[bold white]🚨 Active Alerts[/bold white]",
+            border_style="green",
+            height=10,
+        )
 
     t = Table(
         show_header=True,
@@ -215,21 +230,22 @@ def build_alerts_panel(alerts: List[Dict], correlated: List[Dict]) -> Panel:
 
     # Cascading failure note
     cascading = [c for c in correlated if c.get("is_cascading_failure")]
-    suffix = Text("")
+    Text("")
     if cascading:
-        suffix = Text(
+        Text(
             f"\n  ⚠️  {len(cascading)} cascading failure group(s) detected across services!",
             style="bold yellow",
         )
 
     return Panel(
-        Text.assemble(t.__rich_console__(console, console.options).__next__() if False else "") or t,
+        Text.assemble(t.__rich_console__(console, console.options).__next__() if False else "")
+        or t,
         title=f"[bold white]🚨 Active Alerts ({len(alerts)})[/bold white]",
         border_style="red" if any(a.get("severity") == "P1" for a in alerts) else "yellow",
     )
 
 
-def build_incidents_panel(incidents: List[Dict]) -> Panel:
+def build_incidents_panel(incidents: list[dict]) -> Panel:
     """Builds the recent incidents table panel."""
     t = Table(
         show_header=True,
@@ -276,7 +292,7 @@ def build_incidents_panel(incidents: List[Dict]) -> Panel:
     return Panel(t, title="[bold white]📋 Recent Incidents[/bold white]", border_style="blue")
 
 
-def build_analytics_panel(mttr_stats: Dict, cost_stats: Dict, sla_status: Dict) -> Panel:
+def build_analytics_panel(mttr_stats: dict, cost_stats: dict, sla_status: dict) -> Panel:
     """Builds the MTTR + cost analytics panel."""
     t = Table.grid(padding=(0, 2))
     t.add_column(width=28)
@@ -312,10 +328,14 @@ def build_analytics_panel(mttr_stats: Dict, cost_stats: Dict, sla_status: Dict) 
     sla_color = "green" if target_met else "red"
     sla_text.append(f"  SLA Breaches: {breaches}\n", style="white")
     sla_text.append(f"  Auto-Resolve: {autonomous_rate:.0%}\n", style="white")
-    sla_text.append(f"  Target: [bold {sla_color}]{'✓ MET' if target_met else '✗ MISSED'}[/bold {sla_color}]\n")
+    sla_text.append(
+        f"  Target: [bold {sla_color}]{'✓ MET' if target_met else '✗ MISSED'}[/bold {sla_color}]\n"
+    )
 
     t.add_row(mttr_text, cost_text, sla_text)
-    return Panel(t, title="[bold white]📊 Analytics & SLA Dashboard[/bold white]", border_style="magenta")
+    return Panel(
+        t, title="[bold white]📊 Analytics & SLA Dashboard[/bold white]", border_style="magenta"
+    )
 
 
 def build_footer(refresh_count: int) -> Panel:
@@ -332,6 +352,7 @@ def build_footer(refresh_count: int) -> Panel:
 
 
 # ── Main Dashboard Loop ────────────────────────────────────────────────────────
+
 
 def make_layout(
     detector_url: str,
@@ -406,9 +427,7 @@ def main(detector_url: str, agent_url: str, remediator_url: str, refresh: int) -
             while True:
                 time.sleep(refresh)
                 refresh_count += 1
-                live.update(
-                    make_layout(detector_url, agent_url, remediator_url, refresh_count)
-                )
+                live.update(make_layout(detector_url, agent_url, remediator_url, refresh_count))
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Dashboard stopped by user.[/bold yellow]")
 

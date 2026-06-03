@@ -1,19 +1,25 @@
 import os
 import time
-from typing import Dict, List, Any
-from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel
+from typing import Any
+
 import structlog
-from state import Alert, AgentState
+from fastapi import FastAPI, HTTPException, Response
 from graph import graph
 from incident_store import IncidentStore
+from pydantic import BaseModel
+from state import AgentState, Alert
 
 # Prometheus metrics instrumentation
 try:
     from prometheus_client import (
-        Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST,
+        CONTENT_TYPE_LATEST,
         CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+        generate_latest,
     )
+
     _prom_registry = CollectorRegistry()
     RCA_REQUESTS = Counter(
         "neuroops_rca_requests_total",
@@ -59,8 +65,9 @@ app = FastAPI(
 )
 
 # Global dict to store incident trace reasoning history
-incident_traces: Dict[str, List[Dict[str, Any]]] = {}
+incident_traces: dict[str, list[dict[str, Any]]] = {}
 incident_store = IncidentStore()
+
 
 class RootCauseHypothesis(BaseModel):
     incident_id: str
@@ -70,20 +77,24 @@ class RootCauseHypothesis(BaseModel):
     requires_human_approval: bool
     reasoning: str
     tokens_used: int = 0
-    remediation_result: Dict[str, Any] | None = None
+    remediation_result: dict[str, Any] | None = None
+
 
 @app.post("/investigate", response_model=RootCauseHypothesis)
 async def investigate(alert: Alert, execute_remediation: bool = False):
     """Triggers the multi-agent LangGraph workflow to diagnose a Kubernetes incident."""
-    logger.info("Received alert for diagnostic investigation", alert_id=alert.id, service=alert.service)
+    logger.info(
+        "Received alert for diagnostic investigation", alert_id=alert.id, service=alert.service
+    )
 
     if _prom_enabled:
         RCA_REQUESTS.inc()
-    
+
     import uuid
+
     incident_id = f"inc-{str(uuid.uuid4())[:8]}"
     t_start = time.time()
-    
+
     # Initialize the input state
     initial_state: AgentState = {
         "incident_id": incident_id,
@@ -101,12 +112,12 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
         "execute_remediation": execute_remediation,
         "remediation_result": None,
     }
-    
+
     try:
         # Execute LangGraph workflow synchronously with SQLite persistence config
         config = {"configurable": {"thread_id": incident_id}}
         final_state = await graph.ainvoke(initial_state, config=config)
-        
+
         hypothesis = final_state.get("hypothesis") or "Unknown failure mode"
         confidence = final_state.get("confidence") or 0.0
         recommended_action = final_state.get("recommended_action") or "none"
@@ -114,38 +125,38 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
         reasoning = final_state.get("reasoning") or "No detailed reasoning provided."
         tokens_used = int(final_state.get("tokens_used") or 0)
         remediation_result = final_state.get("remediation_result")
-        
+
         # Save reasoning trace timeline
         trace_timeline = [
             {
                 "step": 1,
                 "agent": "supervisor_init",
                 "action": "Initialized investigation and started OpenTelemetry root span.",
-                "timestamp": alert.timestamp
+                "timestamp": alert.timestamp,
             },
             {
                 "step": 2,
                 "agent": "detective",
                 "findings": final_state.get("detective_findings"),
-                "action": "Analyzed Prometheus metric correlations across cluster service endpoints."
+                "action": "Analyzed Prometheus metric correlations across cluster service endpoints.",
             },
             {
                 "step": 3,
                 "agent": "topologist",
                 "findings": final_state.get("topologist_findings"),
-                "action": "Queried Jaeger trace dependency graphs to inspect latency bottlenecks."
+                "action": "Queried Jaeger trace dependency graphs to inspect latency bottlenecks.",
             },
             {
                 "step": 4,
                 "agent": "historian",
                 "findings": final_state.get("historian_findings"),
-                "action": "Inspected GitHub commit logs and deployment timelines."
+                "action": "Inspected GitHub commit logs and deployment timelines.",
             },
             {
                 "step": 5,
                 "agent": "log_analyser",
                 "findings": final_state.get("log_findings"),
-                "action": "Scraped and parsed active container logs for unhandled exceptions."
+                "action": "Scraped and parsed active container logs for unhandled exceptions.",
             },
             {
                 "step": 6,
@@ -155,8 +166,8 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
                 "confidence": confidence,
                 "recommended_action": recommended_action,
                 "requires_human_approval": requires_human_approval,
-                "reasoning": reasoning
-            }
+                "reasoning": reasoning,
+            },
         ]
         incident_traces[incident_id] = trace_timeline
 
@@ -235,12 +246,12 @@ async def prometheus_metrics():
     )
 
 
-@app.get("/incidents", response_model=List[Dict[str, Any]])
+@app.get("/incidents", response_model=list[dict[str, Any]])
 async def list_incidents(limit: int = 100):
     return incident_store.list_incidents(limit=limit)
 
 
-@app.get("/incidents/{incident_id}/trace", response_model=List[Dict[str, Any]])
+@app.get("/incidents/{incident_id}/trace", response_model=list[dict[str, Any]])
 async def get_incident_trace(incident_id: str):
     """Returns a step-by-step audit replay of the agent's reasoning steps for a given incident."""
     logger.info("Requesting incident trace", incident_id=incident_id)
@@ -260,10 +271,11 @@ async def get_similar_incidents(incident_id: str, top_k: int = 3):
     Returns historical precedents with their diagnoses and recommended actions.
     The Supervisor agent uses this to gain historical context during diagnosis.
     """
-    import sqlite3 as _sqlite3
     import json as _json
+    import sqlite3 as _sqlite3
+
     db_path = os.getenv("AGENT_DB_PATH", "checkpoints/agent_incidents.db")
-    metric_snapshot: Dict[str, float] = {}
+    metric_snapshot: dict[str, float] = {}
     try:
         with _sqlite3.connect(db_path) as conn:
             conn.row_factory = _sqlite3.Row
@@ -278,8 +290,7 @@ async def get_similar_incidents(incident_id: str, top_k: int = 3):
 
     if not metric_snapshot:
         raise HTTPException(
-            status_code=404,
-            detail=f"Incident '{incident_id}' not found or has no metric snapshot."
+            status_code=404, detail=f"Incident '{incident_id}' not found or has no metric snapshot."
         )
 
     similar = incident_store.find_similar_incidents(
@@ -295,6 +306,7 @@ async def get_similar_incidents(incident_id: str, top_k: int = 3):
 
 
 # ── Analytics Endpoints ────────────────────────────────────────────────────────
+
 
 @app.get("/analytics/mttr")
 async def analytics_mttr():

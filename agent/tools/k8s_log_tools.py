@@ -1,7 +1,8 @@
 import time
-from langchain_core.tools import tool
+
 import structlog
 from kubernetes import client, config
+from langchain_core.tools import tool
 
 logger = structlog.get_logger()
 
@@ -16,16 +17,24 @@ except Exception:
     except Exception:
         k8s_configured = False
 
+
 @tool
 def get_pod_logs(service_name: str, namespace: str = "neuroops-demo", tail_lines: int = 50) -> str:
     """
     Retrieves the recent container logs for the specified service in the namespace.
     Use this tool to search for stack traces, database connection timeouts, and memory pressure warnings.
     """
-    logger.info("Starting get_pod_logs tool", service_name=service_name, namespace=namespace, tail_lines=tail_lines)
-    
+    logger.info(
+        "Starting get_pod_logs tool",
+        service_name=service_name,
+        namespace=namespace,
+        tail_lines=tail_lines,
+    )
+
     if not k8s_configured:
-        logger.info("K8s not configured. Generating high-fidelity mock logs.", service_name=service_name)
+        logger.info(
+            "K8s not configured. Generating high-fidelity mock logs.", service_name=service_name
+        )
         return get_mock_logs(service_name)
 
     try:
@@ -35,23 +44,25 @@ def get_pod_logs(service_name: str, namespace: str = "neuroops-demo", tail_lines
         if not pods.items:
             logger.warn("No pods found matching app label", service_name=service_name)
             return f"Error: No active pods found for service '{service_name}' in namespace '{namespace}'."
-            
+
         pod_name = pods.items[0].metadata.name
         logger.info("Found target pod for log retrieval", pod_name=pod_name)
-        
+
         # Pull container logs
         logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=tail_lines)
         return f"=== Logs for pod '{pod_name}' ===\n{logs}"
-        
+
     except Exception as e:
-        logger.error("Failed to query live Kubernetes pod logs", service_name=service_name, error=str(e))
+        logger.error(
+            "Failed to query live Kubernetes pod logs", service_name=service_name, error=str(e)
+        )
         return f"Error querying K8s pod logs for '{service_name}': {str(e)}\n\n[Fallback] Generating mock incident logs:\n{get_mock_logs(service_name)}"
 
 
 def get_mock_logs(service_name: str) -> str:
     """Generates highly realistic container log streams matching golden signal SRE failure modes."""
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    
+
     if service_name == "backend":
         # Database connection pool timeout simulation
         return (

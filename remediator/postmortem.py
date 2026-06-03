@@ -11,16 +11,18 @@ incident resolution. Each report includes:
   - Lessons Learned template
   - Grafana dashboard deeplink
 """
+
 import os
 import time
+from typing import Any
+
 import structlog
-from typing import Any, Optional
 
 logger = structlog.get_logger()
 
 # DORA benchmark thresholds (industry standard)
-DORA_ELITE_MTTR_SECONDS = 3600.0     # < 1 hour = Elite performer
-DORA_HIGH_MTTR_SECONDS = 86400.0     # < 1 day = High performer
+DORA_ELITE_MTTR_SECONDS = 3600.0  # < 1 hour = Elite performer
+DORA_HIGH_MTTR_SECONDS = 86400.0  # < 1 day = High performer
 DORA_CHANGE_FAIL_RATE_TARGET = 0.15  # < 15% change failure rate = Elite/High
 
 
@@ -86,7 +88,7 @@ def generate_postmortem(request: Any, result: Any) -> str:
     # ── 3. MTTR Calculation ─────────────────────────────────────────────────────
     # Try to get real alert timestamp from the request (passed via alert.timestamp)
     alert_obj = getattr(request, "alert", None)
-    alert_ts: Optional[float] = None
+    alert_ts: float | None = None
     if alert_obj is not None:
         try:
             alert_ts = float(

@@ -3,539 +3,434 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NeuroOps — Live Operations Dashboard</title>
-  <meta name="description" content="NeuroOps Autonomous AI SRE Engine — Real-time incident detection, diagnosis, and remediation dashboard." />
+  <title>NeuroOps — Autonomous SRE Command Center</title>
+  <meta name="description" content="NeuroOps: AI-native autonomous SRE engine. Neural incident detection, multi-agent diagnosis, and autonomous remediation — deep space command hub." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="css/style.css" />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed' opacity='0.9'/><text y='.9em' font-size='60' x='18'>⬡</text></svg>" />
 </head>
 <body>
 
-<!-- Animated background -->
+<!-- Deep void background -->
+<div id="void-glow"></div>
 <canvas id="bg-canvas"></canvas>
 
 <div id="app">
 
-  <!-- ═══════ SIDEBAR ═══════ -->
-  <nav class="sidebar">
-    <div class="sidebar-logo">
-      <div class="logo-icon">⚡</div>
-      <div class="logo-text">
-        <div class="logo-name">NeuroOps</div>
-        <div class="logo-sub">SRE Engine v2</div>
+  <!-- ════════════════════════════════════════════════════════
+       TOP NAVIGATION PILL
+       ════════════════════════════════════════════════════════ -->
+  <div class="nav-pill-wrap">
+    <nav class="nav-pill">
+
+      <!-- Logo -->
+      <div class="nav-logo">
+        <div class="nav-logo-orb">⬡</div>
+        <div>
+          <div class="nav-logo-text">NeuroOps</div>
+          <div class="nav-logo-sub">SRE Engine v2</div>
+        </div>
       </div>
-    </div>
 
-    <div class="sidebar-nav">
-      <div class="nav-section-label">Operations</div>
+      <!-- Navigation tabs -->
+      <button class="nav-tab active" id="tab-command" onclick="navigate('command', this)" title="Command Hub [D]">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        Hub
+      </button>
 
-      <a href="#" class="nav-item active" id="nav-dashboard" onclick="navigate('dashboard', this)">
-        <span class="nav-icon">⬡</span>
-        Live Dashboard
-      </a>
-      <a href="#" class="nav-item" id="nav-incidents" onclick="navigate('incidents', this)">
-        <span class="nav-icon">⚡</span>
+      <button class="nav-tab" id="tab-incidents" onclick="navigate('incidents', this)" title="Incidents [I]">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         Incidents
         <span class="nav-badge" id="badge-incidents">0</span>
-      </a>
-      <a href="#" class="nav-item" id="nav-analytics" onclick="navigate('analytics', this)">
-        <span class="nav-icon">◈</span>
+      </button>
+
+      <button class="nav-tab" id="tab-analytics" onclick="navigate('analytics', this)" title="Analytics [A]">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Analytics
-      </a>
-      <a href="#" class="nav-item" id="nav-postmortems" onclick="navigate('postmortems', this)">
-        <span class="nav-icon">◎</span>
+      </button>
+
+      <button class="nav-tab" id="tab-postmortems" onclick="navigate('postmortems', this)" title="Post-Mortems">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Post-Mortems
-      </a>
+      </button>
 
-      <div class="nav-section-label" style="margin-top: 8px;">Services</div>
+      <div class="nav-divider"></div>
 
-      <a href="http://localhost:8001/docs" target="_blank" class="nav-item">
-        <span class="nav-icon">◉</span>
-        Detector API
-      </a>
-      <a href="http://localhost:8002/docs" target="_blank" class="nav-item">
-        <span class="nav-icon">◈</span>
-        Agent API
-      </a>
-      <a href="http://localhost:8003/docs" target="_blank" class="nav-item">
-        <span class="nav-icon">◎</span>
-        Remediator API
-      </a>
-    </div>
-
-    <div class="sidebar-footer">
-      <div class="system-status">
-        <div class="status-dot" id="global-status-dot"></div>
-        <div class="status-text">
-          System: <span id="global-status-text">NOMINAL</span>
-        </div>
-      </div>
-    </div>
-  </nav>
-
-  <!-- ═══════ MAIN CONTENT ═══════ -->
-  <main class="main-content">
-
-    <!-- Topbar -->
-    <header class="topbar">
-      <div class="topbar-title" id="page-title">
-        Live <span>Dashboard</span>
-      </div>
-      <div class="topbar-right">
-        <div class="refresh-indicator">
-          <div class="refresh-dot" id="refresh-dot"></div>
-          <span id="refresh-label">Auto-refresh 5s</span>
-        </div>
-        <div class="time-display" id="clock">--:--:--</div>
-        <button class="btn btn-ghost btn-sm" onclick="triggerManualRefresh()">⟳ Refresh</button>
-        <button class="btn btn-primary btn-sm" id="btn-demo-mode" onclick="toggleDemoMode()">⚡ Demo Mode</button>
-      </div>
-    </header>
-
-    <!-- ═══ PAGE: DASHBOARD ═══ -->
-    <div id="page-dashboard" class="page-body">
-
-      <!-- Stats Strip -->
-      <div class="stats-strip">
-        <div class="stat-card cyan">
-          <div class="stat-icon">⚡</div>
-          <div class="stat-label">Active Alerts</div>
-          <div class="stat-value"><span id="stat-alerts" class="counter">0</span></div>
-          <div class="stat-sub"><span class="neutral" id="stat-alerts-sub">Polling detector...</span></div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-icon">◈</div>
-          <div class="stat-label">Incidents Resolved</div>
-          <div class="stat-value"><span id="stat-resolved" class="counter">0</span></div>
-          <div class="stat-sub"><span class="up" id="stat-autonomous-rate">—</span> autonomous</div>
-        </div>
-        <div class="stat-card amber">
-          <div class="stat-icon">⏱</div>
-          <div class="stat-label">Avg MTTR</div>
-          <div class="stat-value">
-            <span id="stat-mttr" class="counter">—</span>
-            <span class="stat-unit" id="stat-mttr-unit"></span>
-          </div>
-          <div class="stat-sub"><span class="up" id="stat-dora-tier">Calculating...</span></div>
-        </div>
-        <div class="stat-card red">
-          <div class="stat-icon">💰</div>
-          <div class="stat-label">AI Cost Today</div>
-          <div class="stat-value">$<span id="stat-cost" class="counter">0.00</span></div>
-          <div class="stat-sub"><span class="neutral" id="stat-tokens">— tokens used</span></div>
-        </div>
+      <!-- System Status -->
+      <div class="nav-status-pill" id="global-status-pill">
+        <div class="nav-status-dot"></div>
+        <span id="global-status-text">NOMINAL</span>
       </div>
 
-      <!-- Service Health -->
-      <div>
-        <div class="section-header">
-          <div class="section-title">Service Health</div>
-          <div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);" id="health-updated">Last check: —</div>
+      <!-- Right side -->
+      <div class="nav-right">
+        <div class="nav-clock" id="clock">--:--:--</div>
+        <button class="btn-demo" id="btn-demo" onclick="toggleDemoMode()">⚡ Demo</button>
+      </div>
+
+    </nav>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════
+       PAGE: COMMAND HUB (Main Dashboard)
+       ════════════════════════════════════════════════════════ -->
+  <div id="page-command" class="page">
+
+    <!-- Left: Orb + Service Capsules + Stats -->
+    <div class="command-left">
+
+      <!-- Orb Hero -->
+      <div class="orb-section">
+
+        <!-- Central Orb with rings -->
+        <div class="orb-wrap">
+          <!-- Rotating rings -->
+          <div class="orb-ring orb-ring-1"></div>
+          <div class="orb-ring orb-ring-2"></div>
+          <div class="orb-ring orb-ring-3"></div>
+
+          <!-- Service dots on outer ring -->
+          <div class="service-dots" id="service-dots">
+            <!-- Injected by JS: Detector (top), Agent (bottom-right), Remediator (bottom-left) -->
+          </div>
+
+          <!-- Main orb sphere -->
+          <div class="orb-sphere">
+            <div class="orb-label-small">Mean Time to Restore</div>
+            <div class="orb-value" id="orb-mttr">—</div>
+            <div class="orb-unit" id="orb-mttr-unit"></div>
+            <div class="orb-metric-name">avg across all incidents</div>
+            <div class="orb-badge" id="orb-dora-badge">
+              <span>⬡</span>
+              <span id="orb-dora-text">Calculating...</span>
+            </div>
+          </div>
         </div>
-        <div class="health-grid">
 
-          <!-- Detector -->
-          <div class="health-card" id="card-detector" onclick="openServiceDetail('detector')">
-            <div class="health-card-top">
-              <div class="service-name-block">
-                <div class="service-name">Detector</div>
-                <div class="service-port">localhost:8001</div>
-                <div style="margin-top:6px;">
-                  <span class="health-status-badge loading" id="badge-detector">⌛ Checking</span>
-                </div>
-              </div>
-              <div class="health-ring-wrap">
-                <svg class="health-ring" viewBox="0 0 56 56">
-                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
-                  <circle class="health-ring-fill loading" id="ring-detector" cx="28" cy="28" r="22"/>
-                </svg>
-                <div class="health-ring-icon" id="icon-detector">⬡</div>
-              </div>
-            </div>
-            <div class="health-metrics">
-              <div class="health-metric">
-                <div class="health-metric-label">Model Status</div>
-                <div class="health-metric-value" id="det-model">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">Alerts Fired</div>
-                <div class="health-metric-value" id="det-alerts">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">Correlated Groups</div>
-                <div class="health-metric-value" id="det-groups">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">Anomaly Score</div>
-                <div class="health-metric-value" id="det-score">—</div>
-              </div>
-            </div>
+        <!-- Info cluster to the right of orb -->
+        <div class="orb-info-cluster">
+          <div class="orb-info-card green-accent" style="animation-delay:0s">
+            <div class="info-label">Resolved</div>
+            <div class="info-value" id="info-resolved">0</div>
+            <div class="info-sub" id="info-autonomous-rate">— autonomous</div>
           </div>
+          <div class="orb-info-card cyan-accent" style="animation-delay:-1.7s">
+            <div class="info-label">Active Alerts</div>
+            <div class="info-value sm" id="info-alerts">0</div>
+            <div class="info-sub" id="info-alerts-sub">Polling detector...</div>
+          </div>
+          <div class="orb-info-card" style="animation-delay:-3.4s">
+            <div class="info-label">AI Cost Today</div>
+            <div class="info-value sm green" id="info-cost">$0.00</div>
+            <div class="info-sub" id="info-tokens">— tokens used</div>
+          </div>
+        </div>
 
-          <!-- Agent -->
-          <div class="health-card" id="card-agent" onclick="openServiceDetail('agent')">
-            <div class="health-card-top">
-              <div class="service-name-block">
-                <div class="service-name">Agent</div>
-                <div class="service-port">localhost:8002</div>
-                <div style="margin-top:6px;">
-                  <span class="health-status-badge loading" id="badge-agent">⌛ Checking</span>
-                </div>
-              </div>
-              <div class="health-ring-wrap">
-                <svg class="health-ring" viewBox="0 0 56 56">
-                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
-                  <circle class="health-ring-fill loading" id="ring-agent" cx="28" cy="28" r="22"/>
-                </svg>
-                <div class="health-ring-icon" id="icon-agent">◈</div>
-              </div>
-            </div>
-            <div class="health-metrics">
-              <div class="health-metric">
-                <div class="health-metric-label">Incidents Stored</div>
-                <div class="health-metric-value" id="agent-incidents">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">LLM Tokens</div>
-                <div class="health-metric-value" id="agent-tokens">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">p50 MTTR</div>
-                <div class="health-metric-value" id="agent-p50">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">SLA Status</div>
-                <div class="health-metric-value" id="agent-sla">—</div>
-              </div>
-            </div>
-          </div>
+      </div>
 
-          <!-- Remediator -->
-          <div class="health-card" id="card-remediator" onclick="openServiceDetail('remediator')">
-            <div class="health-card-top">
-              <div class="service-name-block">
-                <div class="service-name">Remediator</div>
-                <div class="service-port">localhost:8003</div>
-                <div style="margin-top:6px;">
-                  <span class="health-status-badge loading" id="badge-remediator">⌛ Checking</span>
-                </div>
-              </div>
-              <div class="health-ring-wrap">
-                <svg class="health-ring" viewBox="0 0 56 56">
-                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
-                  <circle class="health-ring-fill loading" id="ring-remediator" cx="28" cy="28" r="22"/>
-                </svg>
-                <div class="health-ring-icon" id="icon-remediator">◎</div>
-              </div>
-            </div>
-            <div class="health-metrics">
-              <div class="health-metric">
-                <div class="health-metric-label">Actions Taken</div>
-                <div class="health-metric-value" id="rem-actions">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">K8s Connected</div>
-                <div class="health-metric-value" id="rem-k8s">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">Flapping Lockouts</div>
-                <div class="health-metric-value" id="rem-flap">—</div>
-              </div>
-              <div class="health-metric">
-                <div class="health-metric-label">Last Action</div>
-                <div class="health-metric-value" id="rem-last">—</div>
-              </div>
-            </div>
+      <!-- Service Capsules -->
+      <div class="service-capsules">
+        <div class="service-capsule loading" id="cap-detector" onclick="openServiceDocs('detector')">
+          <div class="capsule-dot loading" id="capdot-detector"></div>
+          <div>
+            <div class="capsule-name">Detector</div>
           </div>
+          <div class="capsule-metric" id="capmet-detector">:8001 · Checking...</div>
+        </div>
+        <div class="service-capsule loading" id="cap-agent" onclick="openServiceDocs('agent')">
+          <div class="capsule-dot loading" id="capdot-agent"></div>
+          <div>
+            <div class="capsule-name">Agent</div>
+          </div>
+          <div class="capsule-metric" id="capmet-agent">:8002 · Checking...</div>
+        </div>
+        <div class="service-capsule loading" id="cap-remediator" onclick="openServiceDocs('remediator')">
+          <div class="capsule-dot loading" id="capdot-remediator"></div>
+          <div>
+            <div class="capsule-name">Remediator</div>
+          </div>
+          <div class="capsule-metric" id="capmet-remediator">:8003 · Checking...</div>
         </div>
       </div>
 
-      <!-- Alerts + Incidents -->
-      <div class="split-panel">
-
-        <!-- Alerts -->
-        <div class="panel-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <span class="live-badge">LIVE</span>
-              Active Alerts
-            </div>
-            <div class="panel-count" id="alerts-count">0 alerts</div>
-          </div>
-          <div class="panel-body" id="alerts-list">
-            <div class="empty-state">
-              <div class="empty-state-icon">✓</div>
-              <div class="empty-state-text">All systems nominal.<br>No active alerts.</div>
-            </div>
-          </div>
+      <!-- Stats Row -->
+      <div class="stats-row">
+        <div class="stat-glass wide" id="stat-incidents-card">
+          <div class="stat-label">Active Incidents</div>
+          <div class="stat-number" id="stat-active-incidents">0</div>
+          <div class="stat-sub" id="stat-incidents-sub">All systems watching</div>
+          <div class="stat-icon-bg">⚡</div>
         </div>
-
-        <!-- Incidents -->
-        <div class="panel-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              Recent Incidents
-            </div>
-            <div class="panel-count" id="incidents-count">Loading...</div>
-          </div>
-          <div class="panel-body" id="incidents-list">
-            <div class="empty-state">
-              <div class="empty-state-icon">⬡</div>
-              <div class="empty-state-text">No incidents yet.<br>Watching for anomalies...</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Analytics Row -->
-      <div>
-        <div class="section-header">
-          <div class="section-title">MTTR & Cost Analytics</div>
-        </div>
-        <div class="analytics-row">
-
-          <!-- SLA Ring -->
-          <div class="mttr-ring-card">
-            <div class="section-title" style="font-size:11px;">Autonomous Resolution</div>
-            <div class="sla-ring-wrap">
-              <svg class="sla-ring-svg" width="120" height="120" viewBox="0 0 120 120">
-                <circle class="sla-ring-bg" cx="60" cy="60" r="36"/>
-                <circle class="sla-ring-fill" id="sla-ring-fill" cx="60" cy="60" r="36" stroke="var(--green)"/>
-              </svg>
-              <div class="sla-ring-center">
-                <div class="sla-pct" id="sla-pct-text">—%</div>
-                <div class="sla-label">Autonomous</div>
-              </div>
-            </div>
-            <div class="mttr-percs">
-              <div class="mttr-perc-row">
-                <span class="mttr-perc-label">p50</span>
-                <span class="mttr-perc-val" id="mttr-p50">—</span>
-              </div>
-              <div class="mttr-perc-row">
-                <span class="mttr-perc-label">p95</span>
-                <span class="mttr-perc-val" id="mttr-p95">—</span>
-              </div>
-              <div class="mttr-perc-row">
-                <span class="mttr-perc-label">p99</span>
-                <span class="mttr-perc-val" id="mttr-p99">—</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Cost Card -->
-          <div class="cost-card">
-            <div class="cost-label">Total AI Cost</div>
-            <div class="cost-big" id="cost-total">$0.0000</div>
-            <div class="cost-row">
-              <span class="cost-row-label">Total Tokens</span>
-              <span class="cost-row-val" id="cost-tokens">—</span>
-            </div>
-            <div class="cost-row">
-              <span class="cost-row-label">Avg / Incident</span>
-              <span class="cost-row-val" id="cost-avg">—</span>
-            </div>
-            <div class="cost-row">
-              <span class="cost-row-label">Manual Equivalent</span>
-              <span class="cost-row-val text-red" id="cost-manual">—</span>
-            </div>
-            <div class="cost-row">
-              <span class="cost-row-label">💰 Savings</span>
-              <span class="cost-row-val text-green" id="cost-savings">—</span>
-            </div>
-          </div>
-
-          <!-- Trend Chart -->
-          <div class="trend-card">
-            <div class="trend-header">
-              <div class="section-title" style="font-size:11px;">MTTR Trend</div>
-              <div class="trend-legend">
-                <div class="legend-item">
-                  <div class="legend-dot" style="background:var(--cyan)"></div>
-                  p50
-                </div>
-                <div class="legend-item">
-                  <div class="legend-dot" style="background:var(--amber)"></div>
-                  p95
-                </div>
-              </div>
-            </div>
-            <canvas id="trend-canvas"></canvas>
-          </div>
-
-        </div>
-      </div>
-
-    </div><!-- /page-dashboard -->
-
-    <!-- ═══ PAGE: INCIDENTS ═══ -->
-    <div id="page-incidents" class="page-body hidden">
-      <div class="section-header">
-        <div class="section-title">All Incidents</div>
-        <div style="font-size:12px;color:var(--text-muted);">Click any row to view agent reasoning chain</div>
-      </div>
-      <div class="panel-card" style="flex:1;">
-        <div class="panel-header">
-          <div class="panel-title">Incident Log</div>
-          <div class="panel-count" id="all-incidents-count">—</div>
-        </div>
-        <div class="panel-body" id="all-incidents-list" style="max-height:70vh;"></div>
-      </div>
-    </div>
-
-    <!-- ═══ PAGE: ANALYTICS ═══ -->
-    <div id="page-analytics" class="page-body hidden">
-      <div class="section-header">
-        <div class="section-title">DORA Metrics & Performance</div>
-      </div>
-      <div class="stats-strip">
-        <div class="stat-card cyan">
-          <div class="stat-icon">⏱</div>
-          <div class="stat-label">p50 MTTR</div>
-          <div class="stat-value"><span id="ana-p50">—</span><span class="stat-unit">s</span></div>
-          <div class="stat-sub"><span class="neutral">Median recovery</span></div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-icon">⚡</div>
-          <div class="stat-label">p95 MTTR</div>
-          <div class="stat-value"><span id="ana-p95">—</span><span class="stat-unit">s</span></div>
-          <div class="stat-sub"><span class="up">95th percentile</span></div>
-        </div>
-        <div class="stat-card amber">
-          <div class="stat-icon">◈</div>
+        <div class="stat-glass med">
           <div class="stat-label">Autonomous Rate</div>
-          <div class="stat-value"><span id="ana-auto">—</span><span class="stat-unit">%</span></div>
-          <div class="stat-sub"><span class="neutral">Target: ≥70%</span></div>
+          <div class="stat-number cyan" id="stat-auto-rate">—%</div>
+          <div class="stat-sub">Target ≥ 70%</div>
+          <!-- Animated ring -->
+          <div class="auto-ring-wrap">
+            <svg class="auto-ring-svg" width="60" height="60" viewBox="0 0 60 60">
+              <circle class="auto-ring-bg" cx="30" cy="30" r="16" />
+              <circle class="auto-ring-fill" id="auto-ring-fill" cx="30" cy="30" r="16" />
+            </svg>
+          </div>
         </div>
-        <div class="stat-card red">
-          <div class="stat-icon">🛡</div>
-          <div class="stat-label">SLA Breaches</div>
-          <div class="stat-value"><span id="ana-breach">—</span></div>
-          <div class="stat-sub"><span id="ana-breach-rate" class="up">—</span></div>
+        <div class="stat-glass narrow">
+          <div class="stat-label">SLA Status</div>
+          <div class="stat-number green" id="stat-sla">✓</div>
+          <div class="stat-sub" id="stat-sla-sub">No breaches</div>
         </div>
       </div>
 
-      <div class="analytics-row" style="margin-top:var(--gap-xl);">
-        <div class="mttr-ring-card" style="grid-column:1/2;">
-          <div class="section-title" style="font-size:11px;">DORA Performance Tier</div>
-          <div style="display:flex;flex-direction:column;gap:var(--gap-md);padding-top:var(--gap-md);">
-            <div style="padding:var(--gap-md);background:var(--bg-surface);border-radius:var(--r-md);border:1px solid var(--border);">
-              <div style="font-size:22px;font-weight:700;color:var(--green);" id="dora-tier-display">—</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Based on avg MTTR vs DORA benchmarks</div>
-            </div>
-            <div style="font-size:12px;color:var(--text-secondary);line-height:1.7;">
-              Elite: &lt;1hr · High: &lt;1day · Medium: &lt;1wk · Low: &gt;1wk
-            </div>
+    </div><!-- /command-left -->
+
+    <!-- Right: Neural Activity Feed -->
+    <div class="feed-panel">
+      <div class="feed-header">
+        <div class="feed-title">
+          <div class="live-dot"></div>
+          Neural Activity Feed
+          <span class="feed-count" id="feed-count">0 total</span>
+        </div>
+        <div class="feed-subtitle">Click any incident to open the Neural Autopsy Theater</div>
+      </div>
+      <div class="feed-body" id="feed-body">
+        <div class="feed-empty">
+          <div class="feed-empty-icon">⬡</div>
+          <div class="feed-empty-text">No incidents detected.<br>Neural network is watching...</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /page-command -->
+
+  <!-- ════════════════════════════════════════════════════════
+       PAGE: INCIDENTS
+       ════════════════════════════════════════════════════════ -->
+  <div id="page-incidents" class="page hidden" style="padding:88px 32px 32px; min-height:100vh;">
+    <div class="page-header" style="margin-bottom:24px;">
+      <div class="page-title">Incident <span>Log</span></div>
+      <div class="page-subtitle" id="inc-page-count">Loading...</div>
+    </div>
+    <div class="incidents-full-list" id="incidents-full-list"></div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════
+       PAGE: ANALYTICS
+       ════════════════════════════════════════════════════════ -->
+  <div id="page-analytics" class="page hidden" style="padding:88px 32px 32px; min-height:100vh;">
+    <div class="page-header" style="margin-bottom:24px;">
+      <div class="page-title">DORA <span>Analytics</span></div>
+    </div>
+
+    <!-- Hero strip -->
+    <div class="analytics-hero" style="margin-bottom:24px;">
+      <div class="glass-panel" style="border-radius:16px; padding:20px;">
+        <div class="glass-panel-title">p50 MTTR</div>
+        <div class="font-display" style="font-size:36px;font-weight:800;color:var(--text-primary);" id="ana-p50">—</div>
+        <div class="text-dim font-code" style="font-size:11px;">median recovery</div>
+      </div>
+      <div class="glass-panel" style="border-radius:16px; padding:20px;">
+        <div class="glass-panel-title">p95 MTTR</div>
+        <div class="font-display" style="font-size:36px;font-weight:800;color:var(--text-primary);" id="ana-p95">—</div>
+        <div class="text-dim font-code" style="font-size:11px;">95th percentile</div>
+      </div>
+      <div class="glass-panel" style="border-radius:16px; padding:20px;">
+        <div class="glass-panel-title">Autonomous Rate</div>
+        <div class="font-display" style="font-size:36px;font-weight:800;color:var(--violet-bright);" id="ana-auto-rate">—%</div>
+        <div class="text-dim font-code" style="font-size:11px;">target ≥ 70%</div>
+      </div>
+      <div class="glass-panel" style="border-radius:16px; padding:20px;">
+        <div class="glass-panel-title">SLA Breaches</div>
+        <div class="font-display" style="font-size:36px;font-weight:800;color:var(--text-primary);" id="ana-breaches">—</div>
+        <div class="text-dim font-code" style="font-size:11px;" id="ana-breach-rate">—</div>
+      </div>
+    </div>
+
+    <!-- Body: Donut + Breakdown + Chart -->
+    <div class="analytics-body">
+      <!-- Autonomous Donut -->
+      <div class="donut-card">
+        <div class="donut-card-title">Autonomous Resolution</div>
+        <div class="donut-wrap">
+          <svg class="donut-svg" width="140" height="140" viewBox="0 0 140 140">
+            <circle class="donut-bg" cx="70" cy="70" r="36" />
+            <circle class="donut-fill" id="donut-fill" cx="70" cy="70" r="36" />
+          </svg>
+          <div class="donut-center">
+            <div class="donut-pct" id="donut-pct">—%</div>
+            <div class="donut-sub">Auto</div>
           </div>
         </div>
-
-        <div class="cost-card" style="grid-column:2/3;">
-          <div class="cost-label">LLM Cost Breakdown</div>
-          <div class="cost-big" id="ana-cost-total">$0.00</div>
+        <div class="cost-table">
           <div class="cost-row">
-            <span class="cost-row-label">Total Incidents</span>
-            <span class="cost-row-val" id="ana-total-inc">—</span>
+            <span class="cost-row-label">p50</span>
+            <span class="cost-row-val" id="mttr-p50">—</span>
           </div>
+          <div class="cost-row">
+            <span class="cost-row-label">p95</span>
+            <span class="cost-row-val" id="mttr-p95">—</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-row-label">p99</span>
+            <span class="cost-row-val" id="mttr-p99">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- DORA tier + cost -->
+      <div class="dora-tier-card">
+        <div class="glass-panel-title">DORA Performance Tier</div>
+        <div class="dora-tier-value" id="dora-tier">—</div>
+        <div class="text-dim" style="font-size:11px; line-height:1.7;">
+          Elite: &lt;1hr · High: &lt;1day<br>Medium: &lt;1wk · Low: &gt;1wk
+        </div>
+        <div class="cost-table" style="margin-top:12px;">
           <div class="cost-row">
             <span class="cost-row-label">Total Tokens</span>
-            <span class="cost-row-val" id="ana-total-tok">—</span>
+            <span class="cost-row-val" id="ana-tokens">—</span>
           </div>
           <div class="cost-row">
-            <span class="cost-row-label">Avg Cost/Incident</span>
-            <span class="cost-row-val" id="ana-avg-cost">—</span>
+            <span class="cost-row-label">Total Cost</span>
+            <span class="cost-row-val green" id="ana-cost">$0.00</span>
           </div>
           <div class="cost-row">
-            <span class="cost-row-label">Manual SRE Equiv.</span>
-            <span class="cost-row-val text-red" id="ana-manual">—</span>
+            <span class="cost-row-label">Manual Equiv.</span>
+            <span class="cost-row-val red" id="ana-manual">—</span>
           </div>
-        </div>
-
-        <div class="trend-card" style="grid-column:3/4;">
-          <div class="trend-header">
-            <div class="section-title" style="font-size:11px;">Per-Service MTTR Breakdown</div>
-          </div>
-          <div id="per-service-breakdown" style="display:flex;flex-direction:column;gap:var(--gap-sm);padding-top:var(--gap-md);">
-            <div class="empty-state" style="padding:var(--gap-lg);">
-              <div class="empty-state-text">No service data yet</div>
-            </div>
+          <div class="cost-row">
+            <span class="cost-row-label">Savings</span>
+            <span class="cost-row-val green" id="ana-savings">—</span>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- ═══ PAGE: POSTMORTEMS ═══ -->
-    <div id="page-postmortems" class="page-body hidden">
-      <div class="section-header">
-        <div class="section-title">Post-Mortem Reports</div>
-        <div style="font-size:12px;color:var(--text-muted);">Auto-generated DORA-compliant SRE incident reports</div>
-      </div>
-      <div class="panel-card" style="flex:1;">
-        <div class="panel-header">
-          <div class="panel-title">Generated Reports</div>
-          <span style="font-size:11px;color:var(--text-muted);">Stored in /postmortems/</span>
-        </div>
-        <div class="panel-body" id="postmortems-list">
-          <div class="empty-state">
-            <div class="empty-state-icon">◎</div>
-            <div class="empty-state-text">Post-mortems are auto-generated<br>on incident resolution and saved to <span class="mono text-cyan">/postmortems/</span></div>
-          </div>
+      <!-- MTTR Chart + Per-Service -->
+      <div class="chart-card">
+        <div class="glass-panel-title">MTTR Trend</div>
+        <canvas id="trend-canvas"></canvas>
+        <div class="glass-panel-title" style="margin-top:12px;">Per-Service Breakdown</div>
+        <div class="service-breakdown" id="service-breakdown">
+          <div class="text-dim font-code" style="font-size:11px;">Waiting for data...</div>
         </div>
       </div>
-    </div>
-
-  </main><!-- /main-content -->
-
-</div><!-- /app -->
-
-<!-- ═══════ INCIDENT DETAIL MODAL ═══════ -->
-<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
-  <div class="modal" role="dialog" aria-modal="true">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="modal-title">Incident Detail</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="modal-subtitle">—</div>
-      </div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-
-    <div class="modal-body">
-      <!-- Incident Meta -->
-      <div>
-        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Incident Details</div>
-        <div class="detail-grid" id="modal-detail-grid"></div>
-      </div>
-
-      <!-- Agent Reasoning Graph -->
-      <div>
-        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Multi-Agent Reasoning Chain</div>
-        <div class="reasoning-graph" id="modal-reasoning-graph">
-          <!-- Nodes injected by JS -->
-        </div>
-      </div>
-
-      <!-- Root Cause Hypothesis -->
-      <div>
-        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Root Cause Hypothesis</div>
-        <div class="hypothesis-box" id="modal-hypothesis">Awaiting diagnosis...</div>
-      </div>
-
-      <!-- Reasoning Steps -->
-      <div id="modal-trace-section">
-        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Step-by-Step Trace</div>
-        <div id="modal-trace-list" style="display:flex;flex-direction:column;gap:var(--gap-sm);"></div>
-      </div>
-    </div>
-
-    <!-- Actions -->
-    <div class="modal-actions">
-      <button class="btn btn-success" id="modal-approve-btn" onclick="approveAction()">✓ Approve Remediation</button>
-      <button class="btn btn-danger" id="modal-reject-btn" onclick="rejectAction()">✕ Reject Action</button>
-      <div style="flex:1;"></div>
-      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
     </div>
   </div>
-</div>
+
+  <!-- ════════════════════════════════════════════════════════
+       PAGE: POST-MORTEMS
+       ════════════════════════════════════════════════════════ -->
+  <div id="page-postmortems" class="page hidden" style="padding:88px 32px 32px; min-height:100vh;">
+    <div class="page-header" style="margin-bottom:24px;">
+      <div class="page-title">Post-Mortem <span>Reports</span></div>
+      <div class="page-subtitle">Auto-generated DORA-compliant SRE reports</div>
+    </div>
+    <div class="glass-panel" style="max-width:700px;">
+      <div class="glass-panel-title">Generated Reports</div>
+      <div id="postmortems-list">
+        <div style="display:flex;flex-direction:column;align-items:center;padding:48px;gap:16px;color:var(--text-dim);">
+          <div style="font-size:40px;opacity:0.3;">◎</div>
+          <div style="font-size:13px;line-height:1.7;text-align:center;">
+            Post-mortems are auto-generated on incident resolution<br>
+            and saved to <span class="font-code text-cyan">/postmortems/</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════
+       PAGE: NEURAL AUTOPSY THEATER
+       (Incident deep-dive — full page takeover)
+       ════════════════════════════════════════════════════════ -->
+  <div id="page-autopsy" class="page hidden">
+
+    <!-- Header pill -->
+    <div class="autopsy-header">
+      <button class="autopsy-back" onclick="navigate('command', document.getElementById('tab-command'))" title="Back to Hub">←</button>
+      <span class="autopsy-inc-id" id="aut-inc-id">INC-XXX</span>
+      <div class="autopsy-divider"></div>
+      <span class="autopsy-service" id="aut-service">—</span>
+      <span class="sev-badge p1" id="aut-sev-badge">P1</span>
+      <div class="autopsy-divider"></div>
+      <span class="autopsy-elapsed" id="aut-elapsed">—</span>
+      <span class="autopsy-mttr" id="aut-mttr">MTTR: —</span>
+    </div>
+
+    <!-- Synaptic Chain -->
+    <div class="synaptic-chain-wrap">
+      <div class="synaptic-chain-title">
+        Multi-Agent Neural Reasoning Chain
+      </div>
+      <div class="synaptic-chain" id="synaptic-chain">
+        <!-- Injected by JS -->
+      </div>
+    </div>
+
+    <!-- Bottom split -->
+    <div class="autopsy-bottom">
+
+      <!-- Root cause hypothesis -->
+      <div class="hypothesis-panel">
+        <div class="hypothesis-title">Root Cause Hypothesis</div>
+        <div class="hypothesis-text" id="aut-hypothesis">Awaiting neural analysis...</div>
+
+        <!-- Step-by-step trace (collapsed) -->
+        <div>
+          <div class="glass-panel-title" style="margin-bottom:12px; cursor:pointer;" onclick="toggleTrace()" id="trace-toggle-btn">
+            Step-by-Step Trace ▾
+          </div>
+          <div id="trace-list" class="trace-list"></div>
+        </div>
+
+        <!-- Confidence dial -->
+        <div class="conf-dial-row">
+          <div class="conf-dial">
+            <svg class="conf-dial-svg" width="80" height="80" viewBox="0 0 80 80">
+              <circle class="conf-dial-bg" cx="40" cy="40" r="32" />
+              <circle class="conf-dial-fill" id="conf-dial-fill" cx="40" cy="40" r="32" />
+            </svg>
+            <div class="conf-dial-center">
+              <div class="conf-dial-pct" id="conf-pct">—%</div>
+              <div class="conf-dial-sub">Conf</div>
+            </div>
+          </div>
+          <div class="conf-info">
+            <div class="conf-info-label">AI Confidence</div>
+            <div class="conf-info-value" id="conf-info-text">Calculating neural consensus...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Remediation Console -->
+      <div class="remediation-panel">
+        <div class="console-title">Remediation Console</div>
+        <div class="console-body" id="console-body">
+          <div class="console-line">
+            <span class="console-prompt">$</span>
+            <span class="console-cmd" id="console-cmd">Loading action...</span>
+          </div>
+          <div class="console-line">
+            <span class="console-out" id="console-out1"></span>
+          </div>
+          <div class="console-line">
+            <span class="console-out" id="console-out2"></span>
+          </div>
+          <div class="console-line" id="console-cursor-line" style="display:none;">
+            <span class="console-prompt">$</span>
+            <span class="console-cursor"></span>
+          </div>
+        </div>
+        <div class="console-actions" id="console-actions">
+          <button class="console-btn approve" id="aut-approve-btn" onclick="approveAction()">✓ Approve Remediation</button>
+          <button class="console-btn reject" id="aut-reject-btn" onclick="rejectAction()">✕ Reject Action</button>
+          <button class="console-btn close-only" onclick="navigate('command', document.getElementById('tab-command'))">← Back to Hub</button>
+        </div>
+      </div>
+
+    </div><!-- /autopsy-bottom -->
+  </div><!-- /page-autopsy -->
+
+</div><!-- /app -->
 
 <!-- Toast container -->
 <div class="toast-container" id="toast-container"></div>

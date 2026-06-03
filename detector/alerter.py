@@ -1,45 +1,49 @@
-import uuid
 import time
-from typing import Dict, Optional
-from pydantic import BaseModel, Field
+import uuid
+
 import structlog
+from pydantic import BaseModel, Field
 from scraper import MetricWindow
 
 logger = structlog.get_logger()
+
 
 class Alert(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     service: str
     severity: str
     timestamp: float
-    metric_snapshot: Dict[str, float]
+    metric_snapshot: dict[str, float]
     anomaly_score: float
+
 
 class Alerter:
     def __init__(self, deduplication_window_seconds: float = 300.0):
         self.deduplication_window = deduplication_window_seconds
         # service_name -> last alert timestamp
-        self.last_alerted: Dict[str, float] = {}
+        self.last_alerted: dict[str, float] = {}
         logger.info("Initialized Alerter", deduplication_window=deduplication_window_seconds)
 
-    def process_window(self, window: MetricWindow, anomaly_score: float, is_anomaly: bool) -> Optional[Alert]:
+    def process_window(
+        self, window: MetricWindow, anomaly_score: float, is_anomaly: bool
+    ) -> Alert | None:
         """Processes a MetricWindow and generates a deduplicated Alert if anomalous."""
         if not is_anomaly:
             return None
 
         service = window.service_name
         current_time = time.time()
-        
+
         # 1. Deduplication check
         last_alert_time = self.last_alerted.get(service, 0.0)
         time_since_last_alert = current_time - last_alert_time
-        
+
         if time_since_last_alert < self.deduplication_window:
             logger.info(
-                "Alert suppressed due to deduplication", 
-                service=service, 
+                "Alert suppressed due to deduplication",
+                service=service,
                 time_since_last_alert=time_since_last_alert,
-                deduplication_window=self.deduplication_window
+                deduplication_window=self.deduplication_window,
             )
             return None
 
@@ -63,20 +67,20 @@ class Alerter:
             severity=severity,
             timestamp=current_time,
             metric_snapshot=window.feature_vector,
-            anomaly_score=anomaly_score
+            anomaly_score=anomaly_score,
         )
 
         # Update last alerted timestamp for deduplication (only for P1/P2, or all alerts)
         # Suppress alerts for the same service within 5 minutes (standard behavior for all fired alerts)
         self.last_alerted[service] = current_time
-        
+
         logger.info(
-            "New alert classified and fired", 
+            "New alert classified and fired",
             id=alert.id,
-            service=service, 
-            severity=severity, 
+            service=service,
+            severity=severity,
             anomaly_score=anomaly_score,
             error_rate=error_rate,
-            pod_restarts=pod_restarts
+            pod_restarts=pod_restarts,
         )
         return alert

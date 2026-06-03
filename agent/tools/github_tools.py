@@ -1,5 +1,6 @@
-import os
 import datetime
+import os
+
 import structlog
 from github import Github
 from langchain_core.tools import tool
@@ -21,13 +22,14 @@ try:
 except Exception as e:
     logger.warning("Failed to configure GitHub client, running in mock mode", error=str(e))
 
+
 @tool
 def get_recent_deploys(repo: str, minutes: int = 60) -> str:
     """Retrieves list of commits and tags pushed to the target repository in the last N minutes."""
     if not github_configured:
         logger.info("github mock: get_recent_deploys", repo=repo, minutes=minutes)
         # Mock recent commit/deploy activity
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         deploy_time = (now - datetime.timedelta(minutes=10)).isoformat()
         return (
             f"Recent deployments & commits in {repo} (last {minutes}m):\n"
@@ -41,29 +43,31 @@ def get_recent_deploys(repo: str, minutes: int = 60) -> str:
     try:
         g_client = Github(github_token)
         r = g_client.get_repo(repo)
-        
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minutes)
+
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes)
         commits = r.get_commits(since=cutoff)
-        
+
         records = []
         for c in commits[:10]:
             commit_data = c.commit
             author_date = commit_data.author.date
             # Ensure author_date is timezone-aware
             if author_date.tzinfo is None:
-                author_date = author_date.replace(tzinfo=datetime.timezone.utc)
-                
+                author_date = author_date.replace(tzinfo=datetime.UTC)
+
             records.append(
                 f"Commit: {c.sha[:12]}\n"
                 f"Author: {commit_data.author.name} <{commit_data.author.email}>\n"
                 f"Date: {author_date.isoformat()}\n"
                 f"Message: {commit_data.message.splitlines()[0]}\n"
             )
-            
+
         if not records:
             return f"No deployments or commits found in the last {minutes} minutes for repository {repo}."
-            
-        return f"Recent deployments & commits in {repo} (last {minutes}m):\n" + "\n---\n".join(records)
+
+        return f"Recent deployments & commits in {repo} (last {minutes}m):\n" + "\n---\n".join(
+            records
+        )
     except Exception as e:
         logger.error("Failed to query GitHub repository", repo=repo, error=str(e))
         return f"Error querying GitHub deployments for {repo}: {str(e)}"

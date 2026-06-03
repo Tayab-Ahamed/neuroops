@@ -1,22 +1,27 @@
-import os
 import asyncio
-from typing import List, Dict
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
+
 import structlog
-from scraper import PrometheusScraper, MetricWindow
-from models.isolation_forest import IsolationForestModel
-from models.sequence_forecaster import SequenceForecastModel
-from alerter import Alerter, Alert
+from alerter import Alert, Alerter
 from baseline_collector import collect_historical_baseline
 from correlator import AlertCorrelator, CorrelatedAlert
+from fastapi import BackgroundTasks, FastAPI, Response
+from models.isolation_forest import IsolationForestModel
+from models.sequence_forecaster import SequenceForecastModel
+from scraper import MetricWindow, PrometheusScraper
 
 # Prometheus metrics instrumentation
 try:
     from prometheus_client import (
-        Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST,
-        CollectorRegistry
+        CONTENT_TYPE_LATEST,
+        CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+        generate_latest,
     )
+
     _prom_registry = CollectorRegistry()
     ALERTS_ACTIVE = Gauge(
         "neuroops_alerts_active_total",
@@ -56,10 +61,7 @@ except ImportError:
 
 # Configure standard console logging
 structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
-    ]
+    processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
 )
 logger = structlog.get_logger()
 
@@ -74,7 +76,7 @@ correlator = AlertCorrelator(
 )
 
 # Active alert registry
-active_alerts: List[Alert] = []
+active_alerts: list[Alert] = []
 # Model file locations
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/isolation_forest.joblib")
 SEQ_MODEL_PATH = os.getenv("SEQ_MODEL_PATH", "checkpoints/lstm_model.pt")
@@ -82,14 +84,16 @@ model_loaded = False
 seq_model_loaded = False
 
 # service_history maps service_name -> list of MetricWindow
-service_history: Dict[str, List[MetricWindow]] = {}
+service_history: dict[str, list[MetricWindow]] = {}
 
 # Try to load IsolationForest model at startup
 try:
     if os.path.exists(MODEL_PATH):
         model.load(MODEL_PATH)
         model_loaded = True
-        logger.info("Successfully loaded IsolationForest model checkpoint at startup", path=MODEL_PATH)
+        logger.info(
+            "Successfully loaded IsolationForest model checkpoint at startup", path=MODEL_PATH
+        )
     else:
         logger.warn("No model checkpoint found at startup, running in Warmup Mode", path=MODEL_PATH)
 except Exception as e:
@@ -100,33 +104,40 @@ try:
     if os.path.exists(SEQ_MODEL_PATH):
         sequence_model.load(SEQ_MODEL_PATH)
         seq_model_loaded = True
-        logger.info("Successfully loaded sequence forecaster checkpoint at startup", path=SEQ_MODEL_PATH)
+        logger.info(
+            "Successfully loaded sequence forecaster checkpoint at startup", path=SEQ_MODEL_PATH
+        )
 except Exception as e:
-    logger.error("Failed to load sequence forecaster checkpoint at startup", path=SEQ_MODEL_PATH, error=str(e))
+    logger.error(
+        "Failed to load sequence forecaster checkpoint at startup",
+        path=SEQ_MODEL_PATH,
+        error=str(e),
+    )
+
 
 async def background_scraping_loop():
     """Background task running every 15 seconds to scrape metrics and evaluate anomalies."""
     global model_loaded, seq_model_loaded
     logger.info("Starting background scraping loop task")
-    
+
     while True:
         try:
             # Scrape current metric window
             windows = scraper.scrape_metrics()
-            
+
             for window in windows:
                 service = window.service_name
                 if service not in service_history:
                     service_history[service] = []
-                    
+
                 # Capture history sequence before adding this step
                 sequence = list(service_history[service])
-                
+
                 # Append and limit history
                 service_history[service].append(window)
                 if len(service_history[service]) > 5:
                     service_history[service].pop(0)
-                
+
                 if model_loaded:
                     # Run IsolationForest Anomaly detection
                     anomaly_score = model.score(window)
@@ -135,26 +146,31 @@ async def background_scraping_loop():
                     # Update Prometheus anomaly score histogram
                     if _prom_enabled:
                         ANOMALY_SCORE.observe(anomaly_score)
-                    
+
                     # Run sequence forecaster temporal verification
                     is_seq_anomaly = False
                     if seq_model_loaded and len(sequence) >= 5:
                         is_seq_anomaly = sequence_model.predict(sequence, window)
-                    
+
                     # Process window with alerter
                     alert = alerter.process_window(window, anomaly_score, is_anomaly)
                     if alert:
                         # Downclass points that are transient (no temporal trend detected by LSTM)
                         if seq_model_loaded and not is_seq_anomaly:
                             alert.severity = "P3"
-                            logger.info("LSTM filtered transient point anomaly: downclassing alert to P3", service=service)
-                            
+                            logger.info(
+                                "LSTM filtered transient point anomaly: downclassing alert to P3",
+                                service=service,
+                            )
+
                         # Append alert and limit registry size to prevent memory leak
                         active_alerts.append(alert)
                         if len(active_alerts) > 500:
                             active_alerts.pop(0)
                 else:
-                    logger.info("Scraping loop in Warmup Mode - skipping anomaly scoring", service=service)
+                    logger.info(
+                        "Scraping loop in Warmup Mode - skipping anomaly scoring", service=service
+                    )
 
             # Feed active alerts into correlator and update Prometheus gauges
             correlator.ingest(active_alerts)
@@ -164,11 +180,12 @@ async def background_scraping_loop():
                 CORRELATED_GROUPS.set(len(corr_groups))
                 MODEL_LOADED.set(1 if model_loaded else 0)
                 LSTM_LOADED_GAUGE.set(1 if seq_model_loaded else 0)
-                    
+
         except Exception as e:
             logger.error("Error in background scraping loop", error=str(e))
-            
+
         await asyncio.sleep(15)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -182,15 +199,17 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+
 app = FastAPI(title="NeuroOps Anomaly Detection Service", lifespan=lifespan)
 
-@app.get("/alerts", response_model=List[Alert])
+
+@app.get("/alerts", response_model=list[Alert])
 async def get_alerts():
     """Returns the list of active/fired alerts."""
     return active_alerts
 
 
-@app.get("/alerts/correlated", response_model=List[CorrelatedAlert])
+@app.get("/alerts/correlated", response_model=list[CorrelatedAlert])
 async def get_correlated_alerts():
     """
     Returns alerts grouped into correlated groups by temporal proximity.
@@ -233,6 +252,7 @@ async def get_health():
         "correlation_stats": correlator.get_correlation_stats(),
     }
 
+
 def run_async_training(minutes: int):
     """Asynchronous background training process."""
     global model_loaded, seq_model_loaded
@@ -243,34 +263,40 @@ def run_async_training(minutes: int):
         if not windows:
             logger.error("No metrics returned from Prometheus, training aborted")
             return
-        
+
         # Fit IsolationForest
         new_model = IsolationForestModel()
         new_model.fit(windows)
         new_model.save(MODEL_PATH)
-        
+
         # Fit LSTM
         new_seq_model = SequenceForecastModel()
         new_seq_model.fit(windows)
         new_seq_model.save(SEQ_MODEL_PATH)
-        
+
         # Swap models globally
         model.models = new_model.models
         model.features = new_model.features
         model_loaded = True
-        
+
         sequence_model.models = new_seq_model.models
         sequence_model.thresholds = new_seq_model.thresholds
         sequence_model.features = new_seq_model.features
         seq_model_loaded = True
-        
-        logger.info("Asynchronous IsolationForest and LSTM model training and reloading completed successfully!")
+
+        logger.info(
+            "Asynchronous IsolationForest and LSTM model training and reloading completed successfully!"
+        )
     except Exception as e:
         logger.error("Failed in asynchronous model training process", error=str(e))
+
 
 @app.post("/baseline/train")
 async def train_baseline(background_tasks: BackgroundTasks, minutes: int = 30):
     """Triggers historical baseline query and IsolationForest training asynchronously."""
     logger.info("Received request to trigger model baseline training", duration_minutes=minutes)
     background_tasks.add_task(run_async_training, minutes)
-    return {"status": "training_started", "message": f"Historical data collection ({minutes}m) and training running in background."}
+    return {
+        "status": "training_started",
+        "message": f"Historical data collection ({minutes}m) and training running in background.",
+    }

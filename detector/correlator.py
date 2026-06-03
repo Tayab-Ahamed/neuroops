@@ -5,11 +5,12 @@ Groups alerts that fire within a configurable time window into correlated
 CorrelatedAlert objects. Prevents the LangGraph multi-agent RCA pipeline
 from being triggered redundantly for simultaneous cross-service failures.
 """
+
 import time
 import uuid
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
+
 import structlog
+from pydantic import BaseModel, Field
 
 logger = structlog.get_logger()
 
@@ -19,24 +20,24 @@ class Alert(BaseModel):
     service: str
     severity: str
     timestamp: float
-    metric_snapshot: Dict[str, float]
+    metric_snapshot: dict[str, float]
     anomaly_score: float
 
 
 class CorrelatedAlert(BaseModel):
     correlation_id: str = Field(description="Unique ID for this correlated alert group")
-    alerts: List[Alert] = Field(description="All alerts in this correlation group")
+    alerts: list[Alert] = Field(description="All alerts in this correlation group")
     primary_service: str = Field(description="The service with the worst anomaly score")
     severity: str = Field(description="Highest severity level across the group")
     first_seen: float = Field(description="Timestamp of the earliest alert in group")
     last_seen: float = Field(description="Timestamp of the latest alert in group")
-    affected_services: List[str] = Field(description="All unique service names in group")
+    affected_services: list[str] = Field(description="All unique service names in group")
     correlation_window_seconds: float = Field(
         default=30.0, description="Time window used to correlate alerts"
     )
     is_cascading_failure: bool = Field(
         default=False,
-        description="True if multiple services are affected (likely cascading failure)"
+        description="True if multiple services are affected (likely cascading failure)",
     )
 
 
@@ -59,13 +60,13 @@ class AlertCorrelator:
         self.correlation_window_seconds = correlation_window_seconds
         self.max_age_seconds = max_age_seconds
         # Internal buffer of all raw alerts within max_age window
-        self._alert_buffer: List[Alert] = []
+        self._alert_buffer: list[Alert] = []
 
     def _severity_rank(self, severity: str) -> int:
         """Returns numeric rank for severity comparison (lower = more severe)."""
         return {"P1": 1, "P2": 2, "P3": 3}.get(severity.upper(), 99)
 
-    def ingest(self, alerts: List[Alert]) -> None:
+    def ingest(self, alerts: list[Alert]) -> None:
         """Ingests new alerts into the correlation buffer, pruning stale ones."""
         now = time.time()
         cutoff = now - self.max_age_seconds
@@ -86,7 +87,7 @@ class AlertCorrelator:
             new_alerts=len([a for a in alerts if a.id not in existing_ids]),
         )
 
-    def correlate(self) -> List[CorrelatedAlert]:
+    def correlate(self) -> list[CorrelatedAlert]:
         """
         Groups buffered alerts into correlated groups using a greedy sliding window.
 
@@ -99,8 +100,8 @@ class AlertCorrelator:
         # Sort alerts by timestamp ascending
         sorted_alerts = sorted(self._alert_buffer, key=lambda a: a.timestamp)
 
-        groups: List[List[Alert]] = []
-        current_group: List[Alert] = []
+        groups: list[list[Alert]] = []
+        current_group: list[Alert] = []
 
         for alert in sorted_alerts:
             if not current_group:
@@ -117,7 +118,7 @@ class AlertCorrelator:
         if current_group:
             groups.append(current_group)
 
-        correlated: List[CorrelatedAlert] = []
+        correlated: list[CorrelatedAlert] = []
         for group in groups:
             if not group:
                 continue
@@ -152,7 +153,7 @@ class AlertCorrelator:
         correlated.sort(key=lambda c: (self._severity_rank(c.severity), -c.last_seen))
         return correlated
 
-    def get_correlation_stats(self) -> Dict:
+    def get_correlation_stats(self) -> dict:
         """Returns statistics about the current correlation state."""
         correlated = self.correlate()
         cascading = [c for c in correlated if c.is_cascading_failure]

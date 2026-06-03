@@ -219,10 +219,10 @@ jobs:
       - name: Install Bandit
         run: |
           pip install --upgrade pip
-          pip install bandit
+          pip install "bandit[toml]"
 
       - name: Run Bandit
-        run: bandit -r detector/ agent/ remediator/ observability/ benchmarks/ -x "**/tests/*,**/.venv/*"
+        run: bandit -c pyproject.toml -r detector/ agent/ remediator/ observability/ benchmarks/ -x "**/tests/*,**/.venv/*"
 
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main

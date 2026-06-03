@@ -1,7 +1,8 @@
 import os
 import time
-import structlog
+
 import httpx
+import structlog
 from langchain_core.tools import tool
 
 logger = structlog.get_logger()
@@ -16,7 +17,11 @@ try:
         jaeger_configured = True
         logger.info("Successfully connected to Jaeger server", url=jaeger_url)
 except Exception as e:
-    logger.warning("Jaeger server is not configured or offline, running Jaeger tools in mock mode", error=str(e))
+    logger.warning(
+        "Jaeger server is not configured or offline, running Jaeger tools in mock mode",
+        error=str(e),
+    )
+
 
 @tool
 def get_service_dependencies(service_name: str) -> str:
@@ -49,7 +54,9 @@ def get_service_dependencies(service_name: str) -> str:
     try:
         # Query Jaeger dependencies API
         # Jaeger returns dependency links: [{'parent': '...', 'child': '...', 'callCount': ...}]
-        response = httpx.get(f"{jaeger_url}/api/dependencies", params={"endMs": int(time.time() * 1000)}, timeout=5.0)
+        response = httpx.get(
+            f"{jaeger_url}/api/dependencies", params={"endMs": int(time.time() * 1000)}, timeout=5.0
+        )
         if response.status_code == 200:
             links = response.json().get("data", [])
             upstream = []
@@ -61,7 +68,7 @@ def get_service_dependencies(service_name: str) -> str:
                     downstream.append(child)
                 if child == service_name:
                     upstream.append(parent)
-                    
+
             return (
                 f"Service Dependency Analysis for {service_name}:\n"
                 f"- Upstream: {', '.join(upstream) if upstream else 'None'}\n"
@@ -72,4 +79,3 @@ def get_service_dependencies(service_name: str) -> str:
     except Exception as e:
         logger.error("Failed to query Jaeger dependencies", service=service_name, error=str(e))
         return f"Error querying Jaeger: {str(e)}"
-  

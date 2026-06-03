@@ -20,24 +20,27 @@ Usage:
     # List incidents from a specific agent service
     python observability/replay.py --list --agent-url http://localhost:8002
 """
-import click
-import httpx
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
-from rich import box
-from datetime import datetime
-import sys
+
+import json
 import os
 import sqlite3
-import json
+import sys
+from datetime import datetime
+
+import click
+import httpx
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 # Define console for rich formatting with forced wide terminal for reliable rendering
 console = Console(force_terminal=True, width=150)
 
 
 # ── Jaeger helpers ─────────────────────────────────────────────────────────────
+
 
 def get_tag_value(span, key):
     """Helper to extract a tag's value from a Jaeger span."""
@@ -50,10 +53,7 @@ def get_tag_value(span, key):
 def fetch_traces(jaeger_url, incident_id):
     """Fetch trace from Jaeger API based on the incident ID."""
     url = f"{jaeger_url.rstrip('/')}/api/traces"
-    params = {
-        "service": "neuroops.agent",
-        "tag": f"incident.id:{incident_id}"
-    }
+    params = {"service": "neuroops.agent", "tag": f"incident.id:{incident_id}"}
     try:
         response = httpx.get(url, params=params, timeout=10.0)
         response.raise_for_status()
@@ -80,6 +80,7 @@ def process_spans(data):
 
 
 # ── SQLite fallback helpers ────────────────────────────────────────────────────
+
 
 def fetch_from_sqlite(db_path: str, incident_id: str):
     """
@@ -129,16 +130,14 @@ def list_incidents_from_sqlite(db_path: str):
     try:
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT incident_id, service, hypothesis, confidence,
                        recommended_action, requires_human_approval,
                        tokens_used, mttr_seconds, created_at
                 FROM incidents
                 ORDER BY created_at DESC
                 LIMIT 50
-                """
-            ).fetchall()
+                """).fetchall()
         return [dict(r) for r in rows]
     except Exception as e:
         console.print(f"[red]SQLite list failed: {e}[/red]")
@@ -147,14 +146,15 @@ def list_incidents_from_sqlite(db_path: str):
 
 # ── Renderers ──────────────────────────────────────────────────────────────────
 
+
 def render_incident_list(incidents):
     """Renders a rich table of all available incidents."""
     if not incidents:
-        console.print(Panel(
-            "[yellow]No incidents found.[/yellow]",
-            title="Incident List",
-            border_style="yellow"
-        ))
+        console.print(
+            Panel(
+                "[yellow]No incidents found.[/yellow]", title="Incident List", border_style="yellow"
+            )
+        )
         return
 
     table = Table(
@@ -205,8 +205,8 @@ def render_incident_list(incidents):
 
     console.print(table)
     console.print(
-        f"\n[dim]Tip: Replay any incident with: "
-        f"python observability/replay.py --incident-id <INCIDENT_ID>[/dim]"
+        "\n[dim]Tip: Replay any incident with: "
+        "python observability/replay.py --incident-id <INCIDENT_ID>[/dim]"
     )
 
 
@@ -258,7 +258,9 @@ def render_sqlite_replay(trace, meta):
     tokens = meta.get("tokens_used", 0)
 
     rem_color = "green" if action != "none" else "white"
-    approval_str = "[bold red]YES[/bold red]" if requires_approval else "[bold green]NO[/bold green]"
+    approval_str = (
+        "[bold red]YES[/bold red]" if requires_approval else "[bold green]NO[/bold green]"
+    )
     mttr_str = f"{mttr:.1f}s" if mttr else "N/A"
 
     if conf >= 0.8:
@@ -277,25 +279,31 @@ def render_sqlite_replay(trace, meta):
         f"[bold cyan]Requires Human Approval:[/bold cyan] {approval_str}"
     )
 
-    console.print(Panel(
-        summary_text,
-        title="[bold green]EXECUTIVE REMEDIATION DECISION (SQLite Replay)[/bold green]",
-        border_style="bright_blue",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel(
+            summary_text,
+            title="[bold green]EXECUTIVE REMEDIATION DECISION (SQLite Replay)[/bold green]",
+            border_style="bright_blue",
+            padding=(1, 2),
+        )
+    )
 
 
 def render_replay(spans, incident_id):
     """Renders parsed Jaeger spans into a premium terminal visualization."""
     if not spans:
-        console.print(Panel(
-            Text(f"No agent reasoning traces found for Incident ID '{incident_id}'.\n"
-                 "Please ensure the incident graph has executed and Jaeger is running.\n\n"
-                 "Tip: Use --use-sqlite flag to fall back to local SQLite store.",
-                 style="bold yellow"),
-            title="Warning: No Jaeger Data Found",
-            border_style="yellow"
-        ))
+        console.print(
+            Panel(
+                Text(
+                    f"No agent reasoning traces found for Incident ID '{incident_id}'.\n"
+                    "Please ensure the incident graph has executed and Jaeger is running.\n\n"
+                    "Tip: Use --use-sqlite flag to fall back to local SQLite store.",
+                    style="bold yellow",
+                ),
+                title="Warning: No Jaeger Data Found",
+                border_style="yellow",
+            )
+        )
         return
 
     # Initialize premium table
@@ -363,7 +371,7 @@ def render_replay(spans, incident_id):
             confidence_str,
             tools,
             latency_str,
-            tokens_str
+            tokens_str,
         )
 
     console.print(table)
@@ -375,7 +383,9 @@ def render_replay(spans, incident_id):
         requires_approval = get_tag_value(supervisor_span, "agent.requires_human_approval")
 
         rem_color = "green" if remediation != "none" else "white"
-        approval_str = "[bold red]YES[/bold red]" if requires_approval else "[bold green]NO[/bold green]"
+        approval_str = (
+            "[bold red]YES[/bold red]" if requires_approval else "[bold green]NO[/bold green]"
+        )
 
         summary_text = (
             f"[bold cyan]Root Cause Hypothesis:[/bold cyan]\n{hypothesis}\n\n"
@@ -383,57 +393,58 @@ def render_replay(spans, incident_id):
             f"[bold cyan]Requires Human Operator Approval:[/bold cyan] {approval_str}"
         )
 
-        console.print(Panel(
-            summary_text,
-            title="[bold green]EXECUTIVE REMEDIATION DECISION[/bold green]",
-            border_style="bright_blue",
-            padding=(1, 2)
-        ))
+        console.print(
+            Panel(
+                summary_text,
+                title="[bold green]EXECUTIVE REMEDIATION DECISION[/bold green]",
+                border_style="bright_blue",
+                padding=(1, 2),
+            )
+        )
     else:
-        console.print(Panel(
-            "[bold yellow]Warning:[/bold yellow] Supervisor Synthesis node traces were not found in the incident dataset.\n"
-            "An executive remediation decision could not be compiled.",
-            title="Incident Summary Incomplete",
-            border_style="yellow",
-            padding=(1, 2)
-        ))
+        console.print(
+            Panel(
+                "[bold yellow]Warning:[/bold yellow] Supervisor Synthesis node traces were not found in the incident dataset.\n"
+                "An executive remediation decision could not be compiled.",
+                title="Incident Summary Incomplete",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
 
 
 # ── CLI Entry Point ────────────────────────────────────────────────────────────
 
+
 @click.command()
 @click.option(
-    "--incident-id",
-    default=None,
-    help="The unique Incident ID to replay reasoning steps for."
+    "--incident-id", default=None, help="The unique Incident ID to replay reasoning steps for."
 )
 @click.option(
-    "--jaeger-url",
-    default="http://localhost:16686",
-    help="The Jaeger HTTP API endpoint base URL."
+    "--jaeger-url", default="http://localhost:16686", help="The Jaeger HTTP API endpoint base URL."
 )
 @click.option(
     "--agent-url",
     default="http://localhost:8002",
-    help="The NeuroOps Agent API base URL (used for --list and SQLite path)."
+    help="The NeuroOps Agent API base URL (used for --list and SQLite path).",
 )
 @click.option(
     "--db-path",
     default=None,
-    help="Path to the NeuroOps SQLite IncidentStore DB (auto-detected if not set)."
+    help="Path to the NeuroOps SQLite IncidentStore DB (auto-detected if not set).",
 )
 @click.option(
     "--use-sqlite",
     is_flag=True,
     default=False,
-    help="Skip Jaeger and replay directly from the local SQLite IncidentStore."
+    help="Skip Jaeger and replay directly from the local SQLite IncidentStore.",
 )
 @click.option(
     "--list",
     "list_mode",
     is_flag=True,
     default=False,
-    help="List all available incidents (from Agent API or SQLite)."
+    help="List all available incidents (from Agent API or SQLite).",
 )
 def main(incident_id, jaeger_url, agent_url, db_path, use_sqlite, list_mode):
     """
@@ -448,7 +459,9 @@ def main(incident_id, jaeger_url, agent_url, db_path, use_sqlite, list_mode):
 
     # ── List mode ──────────────────────────────────────────────────────────────
     if list_mode:
-        console.print(f"[bold blue]Fetching incident list from Agent API ({agent_url})...[/bold blue]")
+        console.print(
+            f"[bold blue]Fetching incident list from Agent API ({agent_url})...[/bold blue]"
+        )
         incidents = list_incidents_from_api(agent_url)
         if not incidents:
             console.print(f"[yellow]Falling back to SQLite: {resolved_db}[/yellow]")
@@ -464,7 +477,9 @@ def main(incident_id, jaeger_url, agent_url, db_path, use_sqlite, list_mode):
 
     # ── SQLite replay ──────────────────────────────────────────────────────────
     if use_sqlite:
-        console.print(f"[bold blue]Replaying incident '{incident_id}' from SQLite: {resolved_db}[/bold blue]")
+        console.print(
+            f"[bold blue]Replaying incident '{incident_id}' from SQLite: {resolved_db}[/bold blue]"
+        )
         trace, meta = fetch_from_sqlite(resolved_db, incident_id)
         if not trace or not meta:
             console.print(f"[red]Incident '{incident_id}' not found in SQLite.[/red]")
@@ -473,7 +488,9 @@ def main(incident_id, jaeger_url, agent_url, db_path, use_sqlite, list_mode):
         return
 
     # ── Jaeger replay (primary) ────────────────────────────────────────────────
-    console.print(f"[bold blue]Connecting to Jaeger at {jaeger_url} to retrieve incident {incident_id}...[/bold blue]")
+    console.print(
+        f"[bold blue]Connecting to Jaeger at {jaeger_url} to retrieve incident {incident_id}...[/bold blue]"
+    )
     data = fetch_traces(jaeger_url, incident_id)
 
     if data is None:
@@ -490,7 +507,9 @@ def main(incident_id, jaeger_url, agent_url, db_path, use_sqlite, list_mode):
 
     if not spans:
         # Auto-fallback to SQLite
-        console.print(f"[yellow]No Jaeger spans found. Falling back to SQLite: {resolved_db}[/yellow]")
+        console.print(
+            f"[yellow]No Jaeger spans found. Falling back to SQLite: {resolved_db}[/yellow]"
+        )
         trace, meta = fetch_from_sqlite(resolved_db, incident_id)
         if trace and meta:
             render_sqlite_replay(trace, meta)

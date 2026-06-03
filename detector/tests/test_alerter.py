@@ -1,14 +1,17 @@
-import sys
 import os
+import sys
 import time
+
 # Add parent directory to path so imports work cleanly in test suite
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest
+from alerter import Alerter
 from scraper import MetricWindow
-from alerter import Alerter, Alert
 
-def create_mock_window(service: str, error_rate: float = 0.0, pod_restarts: float = 0.0) -> MetricWindow:
+
+def create_mock_window(
+    service: str, error_rate: float = 0.0, pod_restarts: float = 0.0
+) -> MetricWindow:
     return MetricWindow(
         service_name=service,
         timestamp=time.time(),
@@ -20,14 +23,15 @@ def create_mock_window(service: str, error_rate: float = 0.0, pod_restarts: floa
             "error_rate": error_rate,
             "cpu_usage": 0.5,
             "memory_usage": 128e6,
-            "pod_restarts": pod_restarts
-        }
+            "pod_restarts": pod_restarts,
+        },
     )
+
 
 def test_alerter_severity_classification():
     # Deduplication window 5m, we bypass it for distinct services/initial alarms
     alerter = Alerter(deduplication_window_seconds=300)
-    
+
     # 1. Non-anomaly should yield None
     win_normal = create_mock_window("frontend")
     alert = alerter.process_window(win_normal, anomaly_score=-0.1, is_anomaly=False)
@@ -64,27 +68,28 @@ def test_alerter_severity_classification():
     assert alert_p3 is not None
     assert alert_p3.severity == "P3"
 
+
 def test_alerter_deduplication():
-    alerter = Alerter(deduplication_window_seconds=10.0) # 10 seconds for test
-    
+    alerter = Alerter(deduplication_window_seconds=10.0)  # 10 seconds for test
+
     win = create_mock_window("frontend")
-    
+
     # First alert should fire
     alert1 = alerter.process_window(win, anomaly_score=-0.4, is_anomaly=True)
     assert alert1 is not None
-    
+
     # Second alert within deduplication window should be suppressed
     alert2 = alerter.process_window(win, anomaly_score=-0.4, is_anomaly=True)
     assert alert2 is None
-    
+
     # Alert for a DIFFERENT service should fire
     win_backend = create_mock_window("backend")
     alert_backend = alerter.process_window(win_backend, anomaly_score=-0.4, is_anomaly=True)
     assert alert_backend is not None
-    
+
     # Wait for deduplication window to expire
-    alerter.last_alerted["frontend"] = time.time() - 15.0 # force expiry
-    
+    alerter.last_alerted["frontend"] = time.time() - 15.0  # force expiry
+
     # Alert should now fire again
     alert3 = alerter.process_window(win, anomaly_score=-0.4, is_anomaly=True)
     assert alert3 is not None

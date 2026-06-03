@@ -1,12 +1,14 @@
-import time
 import os
+import time
+from typing import Any
+
 import httpx
-from typing import Union, Dict, Any
 import structlog
 
 logger = structlog.get_logger()
 
-def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 120) -> bool:
+
+def verify_resolution(alert: dict[str, Any] | Any, timeout_seconds: int = 120) -> bool:
     """
     Polls the detector /alerts endpoint every 5 seconds.
     Returns True if the triggering alert is no longer active within the timeout.
@@ -18,7 +20,7 @@ def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 
     else:
         alert_id = getattr(alert, "id", None)
         service = getattr(alert, "service", None)
-        
+
     if not alert_id:
         logger.warning("verifier: No alert ID provided, assuming resolved immediately")
         return True
@@ -26,12 +28,20 @@ def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 
     # Check for unit testing overrides to prevent network polling hangs
     test_approval = os.getenv("REMEDIATOR_TEST_APPROVAL")
     if test_approval is not None:
-        logger.info("verifier: Test approval override detected, bypassing HTTP call", alert_id=alert_id)
+        logger.info(
+            "verifier: Test approval override detected, bypassing HTTP call", alert_id=alert_id
+        )
         return True
 
     detector_url = os.getenv("DETECTOR_URL", "http://localhost:8001")
-    logger.info("verifier: Starting incident resolution check", alert_id=alert_id, service=service, detector=detector_url, timeout=timeout_seconds)
-    
+    logger.info(
+        "verifier: Starting incident resolution check",
+        alert_id=alert_id,
+        service=service,
+        detector=detector_url,
+        timeout=timeout_seconds,
+    )
+
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
         try:
@@ -40,7 +50,7 @@ def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 
                 response = client.get(f"{detector_url}/alerts")
                 if response.status_code == 200:
                     active_alerts = response.json()
-                    
+
                     # Extract active alert IDs
                     active_ids = []
                     for act in active_alerts:
@@ -48,18 +58,32 @@ def verify_resolution(alert: Union[Dict[str, Any], Any], timeout_seconds: int = 
                             active_ids.append(act.get("id"))
                         else:
                             active_ids.append(getattr(act, "id", None))
-                            
+
                     if alert_id not in active_ids:
-                        logger.info("verifier: Alert successfully cleared and resolved!", alert_id=alert_id, service=service)
+                        logger.info(
+                            "verifier: Alert successfully cleared and resolved!",
+                            alert_id=alert_id,
+                            service=service,
+                        )
                         return True
                     else:
-                        logger.info("verifier: Alert is still active, waiting for resolution...", alert_id=alert_id)
+                        logger.info(
+                            "verifier: Alert is still active, waiting for resolution...",
+                            alert_id=alert_id,
+                        )
                 else:
-                    logger.warning("verifier: Detector returned non-200 status", status_code=response.status_code)
+                    logger.warning(
+                        "verifier: Detector returned non-200 status",
+                        status_code=response.status_code,
+                    )
         except Exception as e:
-            logger.warning("verifier: Failed to fetch alerts from detector, will retry", error=str(e))
-            
+            logger.warning(
+                "verifier: Failed to fetch alerts from detector, will retry", error=str(e)
+            )
+
         time.sleep(5)
-        
-    logger.warning("verifier: Incident resolution verification timed out", alert_id=alert_id, service=service)
+
+    logger.warning(
+        "verifier: Incident resolution verification timed out", alert_id=alert_id, service=service
+    )
     return False

@@ -1,14 +1,14 @@
 import json
 import os
 import sqlite3
+import tempfile
 import threading
 import time
-import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class RemediationStore:
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         self.db_path = db_path or os.getenv("REMEDIATOR_DB_PATH", "checkpoints/remediator.db")
         self._lock = threading.Lock()
         try:
@@ -28,8 +28,7 @@ class RemediationStore:
     def _ensure_schema(self) -> None:
         with self._lock:
             with self._connect() as conn:
-                conn.execute(
-                    """
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS remediation_actions (
                         incident_id TEXT NOT NULL,
                         service TEXT NOT NULL,
@@ -40,8 +39,7 @@ class RemediationStore:
                         metadata_json TEXT,
                         created_at REAL NOT NULL
                     )
-                    """
-                )
+                    """)
                 conn.commit()
 
     def record_action(
@@ -53,7 +51,7 @@ class RemediationStore:
         success: bool,
         action_taken: str,
         duration_seconds: float,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             with self._connect() as conn:
@@ -77,7 +75,7 @@ class RemediationStore:
                 )
                 conn.commit()
 
-    def list_actions(self, limit: int = 200) -> List[Dict[str, Any]]:
+    def list_actions(self, limit: int = 200) -> list[dict[str, Any]]:
         with self._lock:
             with self._connect() as conn:
                 rows = conn.execute(
@@ -104,7 +102,7 @@ class RemediationStore:
             for row in rows
         ]
 
-    def recent_success_timestamps(self, service: str, within_seconds: float) -> List[float]:
+    def recent_success_timestamps(self, service: str, within_seconds: float) -> list[float]:
         cutoff = time.time() - within_seconds
         with self._lock:
             with self._connect() as conn:
