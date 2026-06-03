@@ -6,7 +6,7 @@ from typing import List, Dict
 import structlog
 from scraper import PrometheusScraper, MetricWindow
 from models.isolation_forest import IsolationForestModel
-from models.lstm import LSTMAnomalyModel
+from models.sequence_forecaster import SequenceForecastModel
 
 # Configure standard console logging
 structlog.configure(
@@ -138,7 +138,7 @@ def main():
     parser.add_argument("--minutes", type=int, default=30, help="Baseline collection window in minutes (default: 30)")
     parser.add_argument("--step", type=int, default=15, help="Query step interval in seconds (default: 15)")
     parser.add_argument("--output", type=str, default="checkpoints/isolation_forest.joblib", help="Model output file path")
-    parser.add_argument("--lstm-output", type=str, default="checkpoints/lstm_model.pt", help="Sequential model output file path")
+    parser.add_argument("--seq-output", type=str, default="checkpoints/lstm_model.pt", help="Sequence forecaster model output file path")
     args = parser.parse_args()
 
     scraper = PrometheusScraper()
@@ -155,11 +155,11 @@ def main():
     model.fit(windows)
     model.save(args.output)
 
-    # Train the sequential verification model
-    lstm_model = LSTMAnomalyModel()
-    lstm_model.fit(windows)
-    lstm_model.save(args.lstm_output)
-    logger.info("Baseline model training completed successfully!", saved_path=args.output, lstm_saved_path=args.lstm_output)
+    # Train the sequence forecaster verification model
+    seq_model = SequenceForecastModel()
+    seq_model.fit(windows)
+    seq_model.save(args.seq_output)
+    logger.info("Baseline model training completed successfully!", saved_path=args.output, seq_model_saved_path=args.seq_output)
 
 if __name__ == "__main__":  # pragma: no cover
     main()

@@ -1,0 +1,189 @@
+# NeuroOps — HorizontalPodAutoscaler definitions (autoscaling/v2)
+# Namespace: neuroops-demo
+#
+# All three demo microservices are autoscaled on CPU and memory so the cluster
+# can absorb synthetic load injected by LitmusChaos chaos experiments.
+#
+# Behavior policy rationale:
+#   scaleUp   — fast reaction (60s window, +2 pods/60s) to handle sudden spikes
+#               without waiting for multiple Prometheus scrape cycles.
+#   scaleDown — conservative cooldown (300s window, -1 pod/120s) to avoid
+#               thrashing when a fault is resolved and load drops quickly.
+#               This also gives the NeuroOps remediator time to confirm that
+#               the incident is resolved before the HPA reclaims capacity.
+#
+# Label managed-by: neuroops allows the remediator to discover these HPAs
+# when deciding whether to patch minReplicas instead of the Deployment directly.
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# HPA: frontend
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+  namespace: neuroops-demo
+  labels:
+    app: frontend
+    app.kubernetes.io/name: neuroops
+    managed-by: neuroops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+
+  minReplicas: 1
+  maxReplicas: 5
+
+  metrics:
+    # Scale out when average CPU utilisation across all pods exceeds 70%.
+    # Frontend is CPU-bound during request processing and SSR rendering.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale out when average memory utilisation exceeds 80%.
+    # Protects against session-state accumulation causing OOMKills.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      # Wait 60s before acting on a sustained high-utilisation signal.
+      # Avoids reacting to sub-minute load spikes (e.g., a single chaos probe).
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      # Wait 300s (5 min) after utilisation drops before removing pods.
+      # Matches the LitmusChaos experiment timeout so capacity is not
+      # reclaimed while an incident is still being diagnosed/remediated.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# HPA: backend
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: neuroops-demo
+  labels:
+    app: backend
+    app.kubernetes.io/name: neuroops
+    managed-by: neuroops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+
+  minReplicas: 1
+  maxReplicas: 5
+
+  metrics:
+    # Backend is CPU-intensive due to request fanout to the database stub.
+    # Scale out at 70% CPU to keep tail latency below the P95 alert threshold.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Backend caches query results in-process; memory can grow under load.
+    # 80% threshold leaves headroom before the container hits its limit.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# HPA: database-stub
+# Lower maxReplicas (3) because the stub uses SQLite which does not support
+# concurrent write scaling — additional replicas only help read distribution.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: database-stub-hpa
+  namespace: neuroops-demo
+  labels:
+    app: database-stub
+    app.kubernetes.io/name: neuroops
+    managed-by: neuroops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: database-stub
+
+  minReplicas: 1
+  # Capped at 3 — adding more replicas beyond this does not improve throughput
+  # for a SQLite-backed stub and would only increase the chaos experiment
+  # MTTR surface unnecessarily.
+  maxReplicas: 3
+
+  metrics:
+    # Database-stub is I/O-bound; CPU spikes indicate query fanout pressure.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # SQLite loads the full DB file into the page cache; track memory closely.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

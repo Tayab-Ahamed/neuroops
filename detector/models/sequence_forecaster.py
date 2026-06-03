@@ -8,8 +8,12 @@ from sklearn.linear_model import Ridge
 
 logger = structlog.get_logger()
 
-class LSTMAnomalyModel:
-    """A high-performance sequential Autoregressive model using Ridge Regression to forecast metrics and detect temporal anomalies."""
+class SequenceForecastModel:
+    """Ridge Regression autoregressive sequence forecaster.
+
+    Predicts the next metric step from a rolling window of past observations
+    and flags anomalies when prediction error exceeds a learned threshold.
+    """
     def __init__(self, sequence_length: int = 5, alpha: float = 1.0, **kwargs):
         self.sequence_length = sequence_length
         self.alpha = alpha

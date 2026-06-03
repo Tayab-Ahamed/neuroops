@@ -1,0 +1,208 @@
+# NeuroOps — Kubernetes RBAC Configuration
+# Principle of least privilege: each service account is granted only the exact
+# verbs and resources required for its operational role.
+#
+# Resources in this file:
+#   - ServiceAccount: neuroops-agent       (namespace: neuroops-demo)
+#   - ServiceAccount: neuroops-remediator  (namespace: neuroops-demo)
+#   - ClusterRole:    neuroops-agent-reader
+#   - ClusterRoleBinding: neuroops-agent-reader-binding
+#   - ClusterRole:    neuroops-remediator-writer
+#   - ClusterRoleBinding: neuroops-remediator-writer-binding
+#
+# ClusterRole (not namespaced Role) is used because the agent and remediator
+# need cross-namespace visibility to observe all workloads in the cluster.
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ServiceAccount: neuroops-agent
+# Identity assumed by the LangGraph multi-agent pods.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: neuroops-agent
+  namespace: neuroops-demo
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: agent
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ServiceAccount: neuroops-remediator
+# Identity assumed by the Remediation Engine pods.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: neuroops-remediator
+  namespace: neuroops-demo
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: remediator
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ClusterRole: neuroops-agent-reader
+#
+# The agent performs read-only root-cause analysis (RCA) across the cluster.
+# It does NOT mutate any resources — all writes are delegated to the remediator.
+# Each rule is annotated with the specific agent sub-task that requires it.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: neuroops-agent-reader
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: agent
+rules:
+
+  # Pods / pod logs — Detective Agent: correlate anomalies with container state;
+  # Log Analyser Agent: tail logs to detect exceptions and OOM messages.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+
+  # Events — Detective Agent: read Kubernetes warning/error events to correlate
+  # with metric anomalies (e.g., OOMKill, BackOff, FailedScheduling events).
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # Nodes — Detective Agent: inspect node-level pressure conditions (CPU, memory,
+  # disk) to distinguish pod-level faults from node-level saturation.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # Services / Endpoints — Topologist Agent: build the service dependency graph
+  # to trace which upstream service is the root of a cascading failure.
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+
+  # Namespaces — Supervisor Agent: enumerate all namespaces so it can scope
+  # its correlation queries correctly per incident namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+
+  # Deployments / ReplicaSets — Historian Agent: inspect current replica counts
+  # and rollout history to identify whether a recent deployment caused the fault.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # DaemonSets / StatefulSets — Detective Agent: inspect cluster-wide workload
+  # types that the detection layer may surface alerts for.
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+
+  # HorizontalPodAutoscalers — Detective Agent: check current HPA state to
+  # determine if auto-scaling has already reacted to the saturation event.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  # Pod metrics — Detective Agent: pull live CPU/memory usage per pod directly
+  # from the metrics API to populate the anomaly feature vector.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ClusterRoleBinding: neuroops-agent-reader-binding
+# Binds the neuroops-agent ServiceAccount to the read-only ClusterRole.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: neuroops-agent-reader-binding
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: agent
+subjects:
+  - kind: ServiceAccount
+    name: neuroops-agent
+    namespace: neuroops-demo
+roleRef:
+  kind: ClusterRole
+  name: neuroops-agent-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ClusterRole: neuroops-remediator-writer
+#
+# The remediator executes the concrete remediation actions decided by the agent.
+# Writes are scoped to the minimum verbs required per action type.
+# Destructive verbs (delete, update, patch) are limited to specific resources.
+# All mutations require a prior read (get/list/watch) so state can be verified
+# before and after the action is executed (idempotency guarantee).
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: neuroops-remediator-writer
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: remediator
+rules:
+
+  # Deployments — rollback_deployment action: patch the deployment with the
+  # last known-good image digest; scale_replicas action: update replica count.
+  # deployments/scale sub-resource is required to update replicas via the
+  # Scale object without re-submitting the entire Deployment manifest.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+
+  # HorizontalPodAutoscalers — scale_replicas action: adjust the minReplicas /
+  # maxReplicas bounds on an existing HPA when scaling the affected service.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+
+  # ConfigMaps — patch_configmap action: update log-rotation or tuning
+  # parameters (e.g., LOG_LEVEL, retention policy) to mitigate disk pressure.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+
+  # Pods — restart_pod action: delete the target pod so Kubernetes re-creates
+  # it from the ReplicaSet. get/list/watch allow the remediator to locate the
+  # correct pod name before deletion and confirm it restarts cleanly.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+
+  # Events — the remediator emits Kubernetes events after each action so that
+  # the cluster audit trail captures every automated change with full context.
+  # create is required to write new events; patch is required to update counts.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+
+---
+# ────────────────────────────────────────────────────────────────────────────
+# ClusterRoleBinding: neuroops-remediator-writer-binding
+# Binds the neuroops-remediator ServiceAccount to the write-capable ClusterRole.
+# ────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: neuroops-remediator-writer-binding
+  labels:
+    app.kubernetes.io/name: neuroops
+    app.kubernetes.io/component: remediator
+subjects:
+  - kind: ServiceAccount
+    name: neuroops-remediator
+    namespace: neuroops-demo
+roleRef:
+  kind: ClusterRole
+  name: neuroops-remediator-writer
+  apiGroup: rbac.authorization.k8s.io

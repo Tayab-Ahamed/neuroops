@@ -6,6 +6,29 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
     """
     Scales a deployment to the requested replica count
     and waits up to 60 seconds for all replicas to be Ready.
+
+    [!] HPA conflict warning (production guidance)
+    -----------------------------------------------
+    This function patches ``spec.replicas`` on the Deployment object directly.
+    When a HorizontalPodAutoscaler is managing the same Deployment (e.g. the
+    HPAs defined in cluster/apps/hpa.yaml), the HPA controller will overwrite
+    this value on its next reconciliation cycle (typically within 15-30 s),
+    causing a race condition known as "replica drift".
+
+    In a production environment the preferred approach is:
+      1. Retrieve the HPA for the Deployment
+         (label selector: ``managed-by=neuroops``).
+      2. Patch ``spec.minReplicas`` on the HPA to the desired lower-bound.
+      3. Optionally patch ``spec.maxReplicas`` if a hard ceiling is also needed.
+
+    Patching the HPA instead of the Deployment hands back control to the
+    autoscaler so that scale-down still happens automatically once the incident
+    is resolved, without the remediator having to issue a second corrective
+    action.
+
+    The current direct-patch implementation is intentionally kept for
+    environments where no HPA is present (e.g. local Minikube with low
+    resource limits) and for unit-testability without the autoscaling API.
     """
     logger.info("Starting scale_deployment action", namespace=namespace, deployment_name=deployment_name, replicas=replicas)
     start_time = time.time()
@@ -31,7 +54,14 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
             logger.info("Deployment is already scaled to target replicas. Checking status...", deployment=deployment_name, replicas=replicas)
             # Idempotency check: if already at target, we just verify ready replicas
         else:
-            # 2. Patch the replica count
+            # 2. Patch the replica count directly on the Deployment.
+            #
+            # [!] Production note: if a HorizontalPodAutoscaler (HPA) is active
+            # for this Deployment, the HPA controller will overwrite spec.replicas
+            # within one reconciliation cycle (~15-30 s), undoing this patch.
+            # Prefer patching HPA spec.minReplicas via the autoscaling/v2 API
+            # when an HPA with label managed-by=neuroops exists for this
+            # Deployment, so the autoscaler remains in control of replica counts.
             body = {"spec": {"replicas": replicas}}
             logger.info("Patching deployment replica count", deployment=deployment_name, replicas=replicas)
             apps_v1.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=body)

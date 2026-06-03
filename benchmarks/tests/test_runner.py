@@ -251,37 +251,41 @@ def test_execute_run_live_remediator_exception():
 # 9. execute_run scenario testing (Live runs - verification timeouts/errors)
 def test_execute_run_live_resolution_timeout():
     mock_client = MagicMock()
-    
+
     # 1. Alert found
     mock_alert_resp = MagicMock(status_code=200)
     mock_alert_resp.json.return_value = [{"service": "backend", "id": "alert-123"}]
-    
+
     # 2. RCA Success
     mock_rca_resp = MagicMock(status_code=200)
     mock_rca_resp.json.return_value = {"hypothesis": "Crash", "confidence": 0.9, "requires_human_approval": False}
-    
+
     # 3. Remediate Success
     mock_rem_resp = MagicMock(status_code=200)
     mock_rem_resp.json.return_value = {"success": True, "action_taken": "fixed", "duration_seconds": 1.0}
-    
+
     mock_client.get.return_value = mock_alert_resp
     mock_client.post.side_effect = [mock_rca_resp, mock_rem_resp]
 
     with patch("subprocess.run") as mock_sub, \
          patch("httpx.Client") as mock_client_class, \
          patch("time.time") as mock_time:
-        
+
         mock_sub.return_value = MagicMock(returncode=0)
         mock_client_class.return_value.__enter__.return_value = mock_client
-        # Cause verifier to timeout instantly (t2 + 600s check)
+
+        # Return 100.0 for the first 20 calls (detection + remediation phases),
+        # then 800.0 to trigger the resolution-verification timeout (>600s).
+        # 7 was too few — the runner makes more time.time() calls during
+        # chaos injection, polling and remediation before reaching the verifier.
         time_calls = []
         def mock_time_fn():
             time_calls.append(True)
-            if len(time_calls) <= 7:
+            if len(time_calls) <= 20:
                 return 100.0
             return 800.0
         mock_time.side_effect = mock_time_fn
-        
+
         res = execute_run("pod-delete", "backend", 1, False, "http://det", "http://agent", "http://rem")
         assert res["status"] == "failed"
         assert "Resolution Verification Timeout" in res["error_message"]

@@ -27,5 +27,6 @@ htmlcov/
 # Virtual environments — container uses its own pip-installed deps
 .venv/
 
-# Persisted model checkpoints — mounted as a named Docker volume at runtime
+# Persisted checkpoints and postmortems — mounted as named Docker volumes at runtime
 checkpoints/
+postmortems/

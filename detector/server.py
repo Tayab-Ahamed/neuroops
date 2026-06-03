@@ -6,7 +6,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
 import structlog
 from scraper import PrometheusScraper, MetricWindow
 from models.isolation_forest import IsolationForestModel
-from models.lstm import LSTMAnomalyModel
+from models.sequence_forecaster import SequenceForecastModel
 from alerter import Alerter, Alert
 from baseline_collector import collect_historical_baseline
 from correlator import AlertCorrelator, CorrelatedAlert
@@ -67,7 +67,7 @@ logger = structlog.get_logger()
 scraper = PrometheusScraper()
 alerter = Alerter()
 model = IsolationForestModel()
-lstm_model = LSTMAnomalyModel()
+sequence_model = SequenceForecastModel()
 correlator = AlertCorrelator(
     correlation_window_seconds=float(os.getenv("CORRELATION_WINDOW_SECONDS", "30")),
     max_age_seconds=float(os.getenv("CORRELATION_MAX_AGE_SECONDS", "300")),
@@ -77,9 +77,9 @@ correlator = AlertCorrelator(
 active_alerts: List[Alert] = []
 # Model file locations
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/isolation_forest.joblib")
-LSTM_MODEL_PATH = os.getenv("LSTM_MODEL_PATH", "checkpoints/lstm_model.pt")
+SEQ_MODEL_PATH = os.getenv("SEQ_MODEL_PATH", "checkpoints/lstm_model.pt")
 model_loaded = False
-lstm_loaded = False
+seq_model_loaded = False
 
 # service_history maps service_name -> list of MetricWindow
 service_history: Dict[str, List[MetricWindow]] = {}
@@ -95,18 +95,18 @@ try:
 except Exception as e:
     logger.error("Failed to load model checkpoint at startup", path=MODEL_PATH, error=str(e))
 
-# Try to load LSTM model at startup
+# Try to load sequence forecaster model at startup
 try:
-    if os.path.exists(LSTM_MODEL_PATH):
-        lstm_model.load(LSTM_MODEL_PATH)
-        lstm_loaded = True
-        logger.info("Successfully loaded LSTM model checkpoint at startup", path=LSTM_MODEL_PATH)
+    if os.path.exists(SEQ_MODEL_PATH):
+        sequence_model.load(SEQ_MODEL_PATH)
+        seq_model_loaded = True
+        logger.info("Successfully loaded sequence forecaster checkpoint at startup", path=SEQ_MODEL_PATH)
 except Exception as e:
-    logger.error("Failed to load LSTM model checkpoint at startup", path=LSTM_MODEL_PATH, error=str(e))
+    logger.error("Failed to load sequence forecaster checkpoint at startup", path=SEQ_MODEL_PATH, error=str(e))
 
 async def background_scraping_loop():
     """Background task running every 15 seconds to scrape metrics and evaluate anomalies."""
-    global model_loaded, lstm_loaded
+    global model_loaded, seq_model_loaded
     logger.info("Starting background scraping loop task")
     
     while True:
@@ -136,16 +136,16 @@ async def background_scraping_loop():
                     if _prom_enabled:
                         ANOMALY_SCORE.observe(anomaly_score)
                     
-                    # Run LSTM temporal verification
-                    is_lstm_anomaly = False
-                    if lstm_loaded and len(sequence) >= 5:
-                        is_lstm_anomaly = lstm_model.predict(sequence, window)
+                    # Run sequence forecaster temporal verification
+                    is_seq_anomaly = False
+                    if seq_model_loaded and len(sequence) >= 5:
+                        is_seq_anomaly = sequence_model.predict(sequence, window)
                     
                     # Process window with alerter
                     alert = alerter.process_window(window, anomaly_score, is_anomaly)
                     if alert:
                         # Downclass points that are transient (no temporal trend detected by LSTM)
-                        if lstm_loaded and not is_lstm_anomaly:
+                        if seq_model_loaded and not is_seq_anomaly:
                             alert.severity = "P3"
                             logger.info("LSTM filtered transient point anomaly: downclassing alert to P3", service=service)
                             
@@ -163,7 +163,7 @@ async def background_scraping_loop():
                 corr_groups = correlator.correlate()
                 CORRELATED_GROUPS.set(len(corr_groups))
                 MODEL_LOADED.set(1 if model_loaded else 0)
-                LSTM_LOADED_GAUGE.set(1 if lstm_loaded else 0)
+                LSTM_LOADED_GAUGE.set(1 if seq_model_loaded else 0)
                     
         except Exception as e:
             logger.error("Error in background scraping loop", error=str(e))
@@ -228,14 +228,14 @@ async def get_health():
     return {
         "status": "ok",
         "model_loaded": model_loaded,
-        "lstm_loaded": lstm_loaded,
+        "seq_model_loaded": seq_model_loaded,
         "active_alerts_count": len(active_alerts),
         "correlation_stats": correlator.get_correlation_stats(),
     }
 
 def run_async_training(minutes: int):
     """Asynchronous background training process."""
-    global model_loaded, lstm_loaded
+    global model_loaded, seq_model_loaded
     try:
         logger.info("Asynchronous baseline training task started")
         # Query historical data from Prometheus instantly
@@ -250,19 +250,19 @@ def run_async_training(minutes: int):
         new_model.save(MODEL_PATH)
         
         # Fit LSTM
-        new_lstm = LSTMAnomalyModel()
-        new_lstm.fit(windows)
-        new_lstm.save(LSTM_MODEL_PATH)
+        new_seq_model = SequenceForecastModel()
+        new_seq_model.fit(windows)
+        new_seq_model.save(SEQ_MODEL_PATH)
         
         # Swap models globally
         model.models = new_model.models
         model.features = new_model.features
         model_loaded = True
         
-        lstm_model.models = new_lstm.models
-        lstm_model.thresholds = new_lstm.thresholds
-        lstm_model.features = new_lstm.features
-        lstm_loaded = True
+        sequence_model.models = new_seq_model.models
+        sequence_model.thresholds = new_seq_model.thresholds
+        sequence_model.features = new_seq_model.features
+        seq_model_loaded = True
         
         logger.info("Asynchronous IsolationForest and LSTM model training and reloading completed successfully!")
     except Exception as e:

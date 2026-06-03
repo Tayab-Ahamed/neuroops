@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 import numpy as np
 from scraper import MetricWindow
-from models.lstm import LSTMAnomalyModel
+from models.sequence_forecaster import SequenceForecastModel
 
 def create_synthetic_window(service: str, cpu: float, memory: float, error_rate: float = 0.0) -> MetricWindow:
     return MetricWindow(
@@ -24,7 +24,7 @@ def create_synthetic_window(service: str, cpu: float, memory: float, error_rate:
         }
     )
 
-def test_lstm_fit_score_predict():
+def test_sequence_forecaster_fit_score_predict():
     # 1. Create sequential baseline dataset (normal steady behavior)
     baseline_windows = []
     
@@ -36,7 +36,7 @@ def test_lstm_fit_score_predict():
         baseline_windows.append(create_synthetic_window("frontend", float(cpu), float(mem)))
 
     # 2. Fit model
-    model = LSTMAnomalyModel(sequence_length=5, epochs=2)
+    model = SequenceForecastModel(sequence_length=5)
     model.fit(baseline_windows)
     
     # Assert models are fitted and threshold is established
@@ -62,16 +62,16 @@ def test_lstm_fit_score_predict():
     assert score_anom > score_normal
     assert is_anomaly_anom is True
 
-def test_lstm_save_load(tmp_path):
+def test_sequence_forecaster_save_load(tmp_path):
     baseline = [create_synthetic_window("frontend", 0.4, 128e6) for _ in range(10)]
-    model = LSTMAnomalyModel(sequence_length=5, epochs=1)
+    model = SequenceForecastModel(sequence_length=5)
     model.fit(baseline)
     
-    save_path = os.path.join(tmp_path, "lstm_model.pt")
+    save_path = os.path.join(tmp_path, "seq_model.joblib")
     model.save(save_path)
     assert os.path.exists(save_path)
     
-    loaded = LSTMAnomalyModel()
+    loaded = SequenceForecastModel()
     loaded.load(save_path)
     
     assert loaded.sequence_length == 5
@@ -79,7 +79,7 @@ def test_lstm_save_load(tmp_path):
     assert "frontend" in loaded.thresholds
     assert loaded.features == model.features
 
-def test_lstm_load_non_existent_file():
-    model = LSTMAnomalyModel()
+def test_sequence_forecaster_load_non_existent_file():
+    model = SequenceForecastModel()
     with pytest.raises(FileNotFoundError):
-        model.load("non_existent_lstm_file_path.pt")
+        model.load("non_existent_seq_model_path.joblib")

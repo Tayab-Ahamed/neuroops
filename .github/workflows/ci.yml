@@ -1,0 +1,238 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint Codebase
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install linting tools
+        run: |
+          pip install --upgrade pip
+          pip install black isort ruff
+
+      - name: Run black check
+        run: black --check detector/ agent/ remediator/ observability/ benchmarks/
+
+      - name: Run isort check
+        run: isort --check detector/ agent/ remediator/ observability/ benchmarks/
+
+      - name: Run ruff check
+        run: ruff check detector/ agent/ remediator/ observability/ benchmarks/
+
+  test-detector:
+    name: Test Detector
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-detector-${{ hashFiles('detector/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r detector/requirements.txt
+
+      - name: Run tests
+        run: pytest detector/tests --cov=detector --cov-report=xml
+
+  test-agent:
+    name: Test Agent
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-agent-${{ hashFiles('agent/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r agent/requirements.txt
+
+      - name: Run tests
+        run: pytest agent/tests --cov=agent --cov-report=xml
+
+  test-remediator:
+    name: Test Remediator
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-remediator-${{ hashFiles('remediator/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r remediator/requirements.txt
+
+      - name: Run tests
+        run: pytest remediator/tests --cov=remediator --cov-report=xml
+
+  test-benchmarks:
+    name: Test Benchmarks
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-benchmarks-${{ hashFiles('benchmarks/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r benchmarks/requirements.txt
+
+      - name: Run tests
+        run: pytest benchmarks/tests --cov=benchmarks --cov-report=xml
+
+  docker-build:
+    name: Docker Build Matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [detector, agent, remediator]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
+          push: false
+          tags: neuroops-${{ matrix.service }}:latest
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-security
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Bandit
+        run: |
+          pip install --upgrade pip
+          pip install bandit
+
+      - name: Run Bandit
+        run: bandit -r detector/ agent/ remediator/ observability/ benchmarks/ -x "**/tests/*,**/.venv/*"
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+
+  ci-ok:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [lint, test-detector, test-agent, test-remediator, test-benchmarks, docker-build, security]
+    steps:
+      - name: Success
+        run: echo "CI pipeline completed successfully."

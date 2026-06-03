@@ -1,0 +1,99 @@
+# pyproject.toml — NeuroOps central tool configuration
+# Consolidates black, isort, ruff, mypy, pytest, and bandit settings
+# so every tool reads from a single source of truth at the repo root.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Black — code formatter
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# isort — import sorter
+# profile=black ensures isort output is compatible with Black's formatting.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.isort]
+profile = "black"
+line_length = 100
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruff — fast Python linter (replaces flake8, pyupgrade, flake8-bugbear, etc.)
+# Rule sets:
+#   E/W  — pycodestyle errors and warnings
+#   F    — pyflakes (undefined names, unused imports)
+#   I    — isort-compatible import ordering
+#   B    — flake8-bugbear (likely bugs and design issues)
+#   C4   — flake8-comprehensions (unnecessary list/set/dict comprehensions)
+#   UP   — pyupgrade (modernise syntax to Python 3.11+)
+# Ignored:
+#   E501 — line too long (enforced by Black instead)
+#   B008 — do not perform function calls in default arguments
+#           (FastAPI Depends() pattern legitimately uses this)
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501", "B008"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mypy — static type checker
+# warn_return_any: flag functions that silently return Any.
+# ignore_missing_imports: third-party stubs (kubernetes, langchain, etc.)
+#   are incomplete; suppress those errors so CI isn't blocked by upstream.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pytest — test runner
+# Migrated from pytest.ini; all settings are identical.
+# asyncio_mode=auto: pytest-asyncio handles every async test automatically
+#   without requiring @pytest.mark.asyncio on each function.
+# asyncio_default_fixture_loop_scope=function: one event loop per test
+#   to prevent state leaking between async tests.
+# testpaths: each service suite is isolated; run a single suite with
+#   `pytest detector/tests -v` to avoid cross-service import conflicts.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+# Default test paths — run each suite from its own venv since they have separate deps.
+# To run a specific suite: pytest detector/tests -v
+testpaths = [
+    "agent/tests",
+    "detector/tests",
+    "remediator/tests",
+    "benchmarks/tests",
+]
+
+# Suppress noisy warnings from third-party packages
+filterwarnings = [
+    "ignore::pytest.PytestDeprecationWarning",
+    "ignore::DeprecationWarning:pkg_resources",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bandit — security linter
+# exclude: test directories and virtual environments do not need security
+#   scanning (test code uses intentionally weak patterns like assert).
+# skips:
+#   B101 — assert statements: legitimate in test files and FastAPI guards;
+#           excluded via `exclude` above but skipped globally for safety.
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = [
+    "detector/tests",
+    "agent/tests",
+    "remediator/tests",
+    "benchmarks/tests",
+    "detector/.venv",
+    "agent/.venv",
+]
+skips = ["B101"]

@@ -18,7 +18,7 @@
 ### Anomaly Detection Layer (`detector/` — Port 8001)
 - **Dual-Layer Model:** Unsupervised **IsolationForest** for point anomaly scoring + **Ridge Regression Forecaster** for temporal sequence validation
 - **8-Dimensional Feature Space:** p50/p95/p99 latency, request rate, error rate, CPU/memory usage, pod restart count
-- **LSTM Temporal Filter:** Downclasses transient spikes to P3 severity, prevents alert fatigue
+- **Ridge Regression Forecaster:** Downclasses transient spikes to P3 severity, prevents alert fatigue
 - **Alert Correlation Engine** (`correlator.py`): Groups alerts within a 30-second window into correlated groups, detects cascading failures, reduces redundant RCA invocations by ~60%
 - **Prometheus `/metrics` Endpoint:** Full RED-method instrumentation (anomaly score histogram, active alert gauge, model status gauge, correlated group counter)
 

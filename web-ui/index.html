@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroOps — Live Operations Dashboard</title>
+  <meta name="description" content="NeuroOps Autonomous AI SRE Engine — Real-time incident detection, diagnosis, and remediation dashboard." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+</head>
+<body>
+
+<!-- Animated background -->
+<canvas id="bg-canvas"></canvas>
+
+<div id="app">
+
+  <!-- ═══════ SIDEBAR ═══════ -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">⚡</div>
+      <div class="logo-text">
+        <div class="logo-name">NeuroOps</div>
+        <div class="logo-sub">SRE Engine v2</div>
+      </div>
+    </div>
+
+    <div class="sidebar-nav">
+      <div class="nav-section-label">Operations</div>
+
+      <a href="#" class="nav-item active" id="nav-dashboard" onclick="navigate('dashboard', this)">
+        <span class="nav-icon">⬡</span>
+        Live Dashboard
+      </a>
+      <a href="#" class="nav-item" id="nav-incidents" onclick="navigate('incidents', this)">
+        <span class="nav-icon">⚡</span>
+        Incidents
+        <span class="nav-badge" id="badge-incidents">0</span>
+      </a>
+      <a href="#" class="nav-item" id="nav-analytics" onclick="navigate('analytics', this)">
+        <span class="nav-icon">◈</span>
+        Analytics
+      </a>
+      <a href="#" class="nav-item" id="nav-postmortems" onclick="navigate('postmortems', this)">
+        <span class="nav-icon">◎</span>
+        Post-Mortems
+      </a>
+
+      <div class="nav-section-label" style="margin-top: 8px;">Services</div>
+
+      <a href="http://localhost:8001/docs" target="_blank" class="nav-item">
+        <span class="nav-icon">◉</span>
+        Detector API
+      </a>
+      <a href="http://localhost:8002/docs" target="_blank" class="nav-item">
+        <span class="nav-icon">◈</span>
+        Agent API
+      </a>
+      <a href="http://localhost:8003/docs" target="_blank" class="nav-item">
+        <span class="nav-icon">◎</span>
+        Remediator API
+      </a>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="system-status">
+        <div class="status-dot" id="global-status-dot"></div>
+        <div class="status-text">
+          System: <span id="global-status-text">NOMINAL</span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════ MAIN CONTENT ═══════ -->
+  <main class="main-content">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-title" id="page-title">
+        Live <span>Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <div class="refresh-indicator">
+          <div class="refresh-dot" id="refresh-dot"></div>
+          <span id="refresh-label">Auto-refresh 5s</span>
+        </div>
+        <div class="time-display" id="clock">--:--:--</div>
+        <button class="btn btn-ghost btn-sm" onclick="triggerManualRefresh()">⟳ Refresh</button>
+        <button class="btn btn-primary btn-sm" id="btn-demo-mode" onclick="toggleDemoMode()">⚡ Demo Mode</button>
+      </div>
+    </header>
+
+    <!-- ═══ PAGE: DASHBOARD ═══ -->
+    <div id="page-dashboard" class="page-body">
+
+      <!-- Stats Strip -->
+      <div class="stats-strip">
+        <div class="stat-card cyan">
+          <div class="stat-icon">⚡</div>
+          <div class="stat-label">Active Alerts</div>
+          <div class="stat-value"><span id="stat-alerts" class="counter">0</span></div>
+          <div class="stat-sub"><span class="neutral" id="stat-alerts-sub">Polling detector...</span></div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">◈</div>
+          <div class="stat-label">Incidents Resolved</div>
+          <div class="stat-value"><span id="stat-resolved" class="counter">0</span></div>
+          <div class="stat-sub"><span class="up" id="stat-autonomous-rate">—</span> autonomous</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-icon">⏱</div>
+          <div class="stat-label">Avg MTTR</div>
+          <div class="stat-value">
+            <span id="stat-mttr" class="counter">—</span>
+            <span class="stat-unit" id="stat-mttr-unit"></span>
+          </div>
+          <div class="stat-sub"><span class="up" id="stat-dora-tier">Calculating...</span></div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-icon">💰</div>
+          <div class="stat-label">AI Cost Today</div>
+          <div class="stat-value">$<span id="stat-cost" class="counter">0.00</span></div>
+          <div class="stat-sub"><span class="neutral" id="stat-tokens">— tokens used</span></div>
+        </div>
+      </div>
+
+      <!-- Service Health -->
+      <div>
+        <div class="section-header">
+          <div class="section-title">Service Health</div>
+          <div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);" id="health-updated">Last check: —</div>
+        </div>
+        <div class="health-grid">
+
+          <!-- Detector -->
+          <div class="health-card" id="card-detector" onclick="openServiceDetail('detector')">
+            <div class="health-card-top">
+              <div class="service-name-block">
+                <div class="service-name">Detector</div>
+                <div class="service-port">localhost:8001</div>
+                <div style="margin-top:6px;">
+                  <span class="health-status-badge loading" id="badge-detector">⌛ Checking</span>
+                </div>
+              </div>
+              <div class="health-ring-wrap">
+                <svg class="health-ring" viewBox="0 0 56 56">
+                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
+                  <circle class="health-ring-fill loading" id="ring-detector" cx="28" cy="28" r="22"/>
+                </svg>
+                <div class="health-ring-icon" id="icon-detector">⬡</div>
+              </div>
+            </div>
+            <div class="health-metrics">
+              <div class="health-metric">
+                <div class="health-metric-label">Model Status</div>
+                <div class="health-metric-value" id="det-model">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">Alerts Fired</div>
+                <div class="health-metric-value" id="det-alerts">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">Correlated Groups</div>
+                <div class="health-metric-value" id="det-groups">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">Anomaly Score</div>
+                <div class="health-metric-value" id="det-score">—</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent -->
+          <div class="health-card" id="card-agent" onclick="openServiceDetail('agent')">
+            <div class="health-card-top">
+              <div class="service-name-block">
+                <div class="service-name">Agent</div>
+                <div class="service-port">localhost:8002</div>
+                <div style="margin-top:6px;">
+                  <span class="health-status-badge loading" id="badge-agent">⌛ Checking</span>
+                </div>
+              </div>
+              <div class="health-ring-wrap">
+                <svg class="health-ring" viewBox="0 0 56 56">
+                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
+                  <circle class="health-ring-fill loading" id="ring-agent" cx="28" cy="28" r="22"/>
+                </svg>
+                <div class="health-ring-icon" id="icon-agent">◈</div>
+              </div>
+            </div>
+            <div class="health-metrics">
+              <div class="health-metric">
+                <div class="health-metric-label">Incidents Stored</div>
+                <div class="health-metric-value" id="agent-incidents">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">LLM Tokens</div>
+                <div class="health-metric-value" id="agent-tokens">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">p50 MTTR</div>
+                <div class="health-metric-value" id="agent-p50">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">SLA Status</div>
+                <div class="health-metric-value" id="agent-sla">—</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Remediator -->
+          <div class="health-card" id="card-remediator" onclick="openServiceDetail('remediator')">
+            <div class="health-card-top">
+              <div class="service-name-block">
+                <div class="service-name">Remediator</div>
+                <div class="service-port">localhost:8003</div>
+                <div style="margin-top:6px;">
+                  <span class="health-status-badge loading" id="badge-remediator">⌛ Checking</span>
+                </div>
+              </div>
+              <div class="health-ring-wrap">
+                <svg class="health-ring" viewBox="0 0 56 56">
+                  <circle class="health-ring-bg" cx="28" cy="28" r="22"/>
+                  <circle class="health-ring-fill loading" id="ring-remediator" cx="28" cy="28" r="22"/>
+                </svg>
+                <div class="health-ring-icon" id="icon-remediator">◎</div>
+              </div>
+            </div>
+            <div class="health-metrics">
+              <div class="health-metric">
+                <div class="health-metric-label">Actions Taken</div>
+                <div class="health-metric-value" id="rem-actions">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">K8s Connected</div>
+                <div class="health-metric-value" id="rem-k8s">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">Flapping Lockouts</div>
+                <div class="health-metric-value" id="rem-flap">—</div>
+              </div>
+              <div class="health-metric">
+                <div class="health-metric-label">Last Action</div>
+                <div class="health-metric-value" id="rem-last">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alerts + Incidents -->
+      <div class="split-panel">
+
+        <!-- Alerts -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span class="live-badge">LIVE</span>
+              Active Alerts
+            </div>
+            <div class="panel-count" id="alerts-count">0 alerts</div>
+          </div>
+          <div class="panel-body" id="alerts-list">
+            <div class="empty-state">
+              <div class="empty-state-icon">✓</div>
+              <div class="empty-state-text">All systems nominal.<br>No active alerts.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Incidents -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              Recent Incidents
+            </div>
+            <div class="panel-count" id="incidents-count">Loading...</div>
+          </div>
+          <div class="panel-body" id="incidents-list">
+            <div class="empty-state">
+              <div class="empty-state-icon">⬡</div>
+              <div class="empty-state-text">No incidents yet.<br>Watching for anomalies...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analytics Row -->
+      <div>
+        <div class="section-header">
+          <div class="section-title">MTTR & Cost Analytics</div>
+        </div>
+        <div class="analytics-row">
+
+          <!-- SLA Ring -->
+          <div class="mttr-ring-card">
+            <div class="section-title" style="font-size:11px;">Autonomous Resolution</div>
+            <div class="sla-ring-wrap">
+              <svg class="sla-ring-svg" width="120" height="120" viewBox="0 0 120 120">
+                <circle class="sla-ring-bg" cx="60" cy="60" r="36"/>
+                <circle class="sla-ring-fill" id="sla-ring-fill" cx="60" cy="60" r="36" stroke="var(--green)"/>
+              </svg>
+              <div class="sla-ring-center">
+                <div class="sla-pct" id="sla-pct-text">—%</div>
+                <div class="sla-label">Autonomous</div>
+              </div>
+            </div>
+            <div class="mttr-percs">
+              <div class="mttr-perc-row">
+                <span class="mttr-perc-label">p50</span>
+                <span class="mttr-perc-val" id="mttr-p50">—</span>
+              </div>
+              <div class="mttr-perc-row">
+                <span class="mttr-perc-label">p95</span>
+                <span class="mttr-perc-val" id="mttr-p95">—</span>
+              </div>
+              <div class="mttr-perc-row">
+                <span class="mttr-perc-label">p99</span>
+                <span class="mttr-perc-val" id="mttr-p99">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cost Card -->
+          <div class="cost-card">
+            <div class="cost-label">Total AI Cost</div>
+            <div class="cost-big" id="cost-total">$0.0000</div>
+            <div class="cost-row">
+              <span class="cost-row-label">Total Tokens</span>
+              <span class="cost-row-val" id="cost-tokens">—</span>
+            </div>
+            <div class="cost-row">
+              <span class="cost-row-label">Avg / Incident</span>
+              <span class="cost-row-val" id="cost-avg">—</span>
+            </div>
+            <div class="cost-row">
+              <span class="cost-row-label">Manual Equivalent</span>
+              <span class="cost-row-val text-red" id="cost-manual">—</span>
+            </div>
+            <div class="cost-row">
+              <span class="cost-row-label">💰 Savings</span>
+              <span class="cost-row-val text-green" id="cost-savings">—</span>
+            </div>
+          </div>
+
+          <!-- Trend Chart -->
+          <div class="trend-card">
+            <div class="trend-header">
+              <div class="section-title" style="font-size:11px;">MTTR Trend</div>
+              <div class="trend-legend">
+                <div class="legend-item">
+                  <div class="legend-dot" style="background:var(--cyan)"></div>
+                  p50
+                </div>
+                <div class="legend-item">
+                  <div class="legend-dot" style="background:var(--amber)"></div>
+                  p95
+                </div>
+              </div>
+            </div>
+            <canvas id="trend-canvas"></canvas>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /page-dashboard -->
+
+    <!-- ═══ PAGE: INCIDENTS ═══ -->
+    <div id="page-incidents" class="page-body hidden">
+      <div class="section-header">
+        <div class="section-title">All Incidents</div>
+        <div style="font-size:12px;color:var(--text-muted);">Click any row to view agent reasoning chain</div>
+      </div>
+      <div class="panel-card" style="flex:1;">
+        <div class="panel-header">
+          <div class="panel-title">Incident Log</div>
+          <div class="panel-count" id="all-incidents-count">—</div>
+        </div>
+        <div class="panel-body" id="all-incidents-list" style="max-height:70vh;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ PAGE: ANALYTICS ═══ -->
+    <div id="page-analytics" class="page-body hidden">
+      <div class="section-header">
+        <div class="section-title">DORA Metrics & Performance</div>
+      </div>
+      <div class="stats-strip">
+        <div class="stat-card cyan">
+          <div class="stat-icon">⏱</div>
+          <div class="stat-label">p50 MTTR</div>
+          <div class="stat-value"><span id="ana-p50">—</span><span class="stat-unit">s</span></div>
+          <div class="stat-sub"><span class="neutral">Median recovery</span></div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">⚡</div>
+          <div class="stat-label">p95 MTTR</div>
+          <div class="stat-value"><span id="ana-p95">—</span><span class="stat-unit">s</span></div>
+          <div class="stat-sub"><span class="up">95th percentile</span></div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-icon">◈</div>
+          <div class="stat-label">Autonomous Rate</div>
+          <div class="stat-value"><span id="ana-auto">—</span><span class="stat-unit">%</span></div>
+          <div class="stat-sub"><span class="neutral">Target: ≥70%</span></div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-icon">🛡</div>
+          <div class="stat-label">SLA Breaches</div>
+          <div class="stat-value"><span id="ana-breach">—</span></div>
+          <div class="stat-sub"><span id="ana-breach-rate" class="up">—</span></div>
+        </div>
+      </div>
+
+      <div class="analytics-row" style="margin-top:var(--gap-xl);">
+        <div class="mttr-ring-card" style="grid-column:1/2;">
+          <div class="section-title" style="font-size:11px;">DORA Performance Tier</div>
+          <div style="display:flex;flex-direction:column;gap:var(--gap-md);padding-top:var(--gap-md);">
+            <div style="padding:var(--gap-md);background:var(--bg-surface);border-radius:var(--r-md);border:1px solid var(--border);">
+              <div style="font-size:22px;font-weight:700;color:var(--green);" id="dora-tier-display">—</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Based on avg MTTR vs DORA benchmarks</div>
+            </div>
+            <div style="font-size:12px;color:var(--text-secondary);line-height:1.7;">
+              Elite: &lt;1hr · High: &lt;1day · Medium: &lt;1wk · Low: &gt;1wk
+            </div>
+          </div>
+        </div>
+
+        <div class="cost-card" style="grid-column:2/3;">
+          <div class="cost-label">LLM Cost Breakdown</div>
+          <div class="cost-big" id="ana-cost-total">$0.00</div>
+          <div class="cost-row">
+            <span class="cost-row-label">Total Incidents</span>
+            <span class="cost-row-val" id="ana-total-inc">—</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-row-label">Total Tokens</span>
+            <span class="cost-row-val" id="ana-total-tok">—</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-row-label">Avg Cost/Incident</span>
+            <span class="cost-row-val" id="ana-avg-cost">—</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-row-label">Manual SRE Equiv.</span>
+            <span class="cost-row-val text-red" id="ana-manual">—</span>
+          </div>
+        </div>
+
+        <div class="trend-card" style="grid-column:3/4;">
+          <div class="trend-header">
+            <div class="section-title" style="font-size:11px;">Per-Service MTTR Breakdown</div>
+          </div>
+          <div id="per-service-breakdown" style="display:flex;flex-direction:column;gap:var(--gap-sm);padding-top:var(--gap-md);">
+            <div class="empty-state" style="padding:var(--gap-lg);">
+              <div class="empty-state-text">No service data yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ PAGE: POSTMORTEMS ═══ -->
+    <div id="page-postmortems" class="page-body hidden">
+      <div class="section-header">
+        <div class="section-title">Post-Mortem Reports</div>
+        <div style="font-size:12px;color:var(--text-muted);">Auto-generated DORA-compliant SRE incident reports</div>
+      </div>
+      <div class="panel-card" style="flex:1;">
+        <div class="panel-header">
+          <div class="panel-title">Generated Reports</div>
+          <span style="font-size:11px;color:var(--text-muted);">Stored in /postmortems/</span>
+        </div>
+        <div class="panel-body" id="postmortems-list">
+          <div class="empty-state">
+            <div class="empty-state-icon">◎</div>
+            <div class="empty-state-text">Post-mortems are auto-generated<br>on incident resolution and saved to <span class="mono text-cyan">/postmortems/</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main><!-- /main-content -->
+
+</div><!-- /app -->
+
+<!-- ═══════ INCIDENT DETAIL MODAL ═══════ -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-title">Incident Detail</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="modal-subtitle">—</div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Incident Meta -->
+      <div>
+        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Incident Details</div>
+        <div class="detail-grid" id="modal-detail-grid"></div>
+      </div>
+
+      <!-- Agent Reasoning Graph -->
+      <div>
+        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Multi-Agent Reasoning Chain</div>
+        <div class="reasoning-graph" id="modal-reasoning-graph">
+          <!-- Nodes injected by JS -->
+        </div>
+      </div>
+
+      <!-- Root Cause Hypothesis -->
+      <div>
+        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Root Cause Hypothesis</div>
+        <div class="hypothesis-box" id="modal-hypothesis">Awaiting diagnosis...</div>
+      </div>
+
+      <!-- Reasoning Steps -->
+      <div id="modal-trace-section">
+        <div class="section-title" style="font-size:11px;margin-bottom:var(--gap-md);">Step-by-Step Trace</div>
+        <div id="modal-trace-list" style="display:flex;flex-direction:column;gap:var(--gap-sm);"></div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="modal-actions">
+      <button class="btn btn-success" id="modal-approve-btn" onclick="approveAction()">✓ Approve Remediation</button>
+      <button class="btn btn-danger" id="modal-reject-btn" onclick="rejectAction()">✕ Reject Action</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

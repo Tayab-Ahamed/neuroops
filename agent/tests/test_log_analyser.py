@@ -11,18 +11,18 @@ from agents.log_analyser import log_analyser_node
 
 def test_get_pod_logs_tool():
     # Test high-fidelity mock log generation
-    res_backend = get_pod_logs.invoke({"service_name": "backend"})
+    res_backend = get_pod_logs.func(**{"service_name": "backend"})
     assert "sqlalchemy.exc.OperationalError" in res_backend
     assert "Connection timed out" in res_backend
     
-    res_frontend = get_pod_logs.invoke({"service_name": "frontend"})
+    res_frontend = get_pod_logs.func(**{"service_name": "frontend"})
     assert "Event loop blocked" in res_frontend
     assert "504 Gateway Timeout" in res_frontend
     
-    res_db = get_pod_logs.invoke({"service_name": "database-stub"})
+    res_db = get_pod_logs.func(**{"service_name": "database-stub"})
     assert "OOM-killer triggered" in res_db
     
-    res_fallback = get_pod_logs.invoke({"service_name": "unknown-service"})
+    res_fallback = get_pod_logs.func(**{"service_name": "unknown-service"})
     assert "GET /health" in res_fallback
 
 @pytest.mark.asyncio
@@ -59,3 +59,4 @@ async def test_log_analyser_node_mock_path(monkeypatch):
     assert "psycopg2.OperationalError" in findings["error_logs"][0]
     assert findings["suspect_stack_trace"] is not None
     assert "connection pooling" in findings["reasoning"].lower()
+
