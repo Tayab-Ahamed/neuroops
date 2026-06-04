@@ -15,6 +15,12 @@ class Alert(BaseModel):
     timestamp: float
     metric_snapshot: dict[str, float]
     anomaly_score: float
+    type: str = "reactive"
+    metric: str | None = None
+    current_value: float | None = None
+    predicted_value: float | None = None
+    time_to_breach_seconds: float | None = None
+    confidence: float | None = None
 
 
 class Alerter:

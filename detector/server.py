@@ -7,6 +7,7 @@ from alerter import Alert, Alerter
 from baseline_collector import collect_historical_baseline
 from correlator import AlertCorrelator, CorrelatedAlert
 from fastapi import BackgroundTasks, FastAPI, Response
+from models.forecaster import TrendForecaster
 from models.isolation_forest import IsolationForestModel
 from models.sequence_forecaster import SequenceForecastModel
 from scraper import MetricWindow, PrometheusScraper
@@ -82,6 +83,9 @@ MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/isolation_forest.joblib")
 SEQ_MODEL_PATH = os.getenv("SEQ_MODEL_PATH", "checkpoints/lstm_model.pt")
 model_loaded = False
 seq_model_loaded = False
+PREDICTIVE_ALERTS_ENABLED = os.getenv("PREDICTIVE_ALERTS_ENABLED", "true").lower() == "true"
+forecaster = TrendForecaster()
+
 
 # service_history maps service_name -> list of MetricWindow
 service_history: dict[str, list[MetricWindow]] = {}
@@ -172,6 +176,15 @@ async def background_scraping_loop():
                         "Scraping loop in Warmup Mode - skipping anomaly scoring", service=service
                     )
 
+                # Run predictive alerting if enabled
+                if PREDICTIVE_ALERTS_ENABLED:
+                    forecaster.update(window)
+                    prefault = forecaster.predict_breach(service)
+                    if prefault:
+                        active_alerts.append(prefault)
+                        if len(active_alerts) > 500:
+                            active_alerts.pop(0)
+
             # Feed active alerts into correlator and update Prometheus gauges
             correlator.ingest(active_alerts)
             if _prom_enabled:
@@ -207,6 +220,12 @@ app = FastAPI(title="NeuroOps Anomaly Detection Service", lifespan=lifespan)
 async def get_alerts():
     """Returns the list of active/fired alerts."""
     return active_alerts
+
+
+@app.get("/alerts/predictive", response_model=list[Alert])
+async def get_predictive_alerts():
+    """Returns only predictive alerts (type='predictive')."""
+    return [a for a in active_alerts if getattr(a, "type", "reactive") == "predictive"]
 
 
 @app.get("/alerts/correlated", response_model=list[CorrelatedAlert])
