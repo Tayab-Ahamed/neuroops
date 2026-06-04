@@ -946,6 +946,34 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 .console-btn.close-only { background: var(--glass-2); color: var(--text-dim); border-color: var(--border); }
 .console-btn.close-only:hover { background: var(--glass-1); color: var(--text-primary); }
 
+/* ── SSE / Poll status pill ───────────────────────────────── */
+.nav-sse-pill {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: var(--r-full);
+  font-family: var(--font-code); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  background: rgba(100,180,220,0.06);
+  border: 1px solid rgba(100,180,220,0.15);
+  color: var(--text-dim);
+  transition: all 0.4s var(--ease);
+  cursor: default;
+}
+.nav-sse-pill.live {
+  background: var(--green-dim);
+  border-color: rgba(74,222,128,0.35);
+  color: var(--green);
+}
+.nav-sse-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.4s ease, box-shadow 0.4s ease;
+}
+.nav-sse-pill.live .nav-sse-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: dot-pulse 1.5s ease-in-out infinite;
+}
+
 /* ============================================================
    TOAST SYSTEM
    ============================================================ */

@@ -65,6 +65,11 @@
 
       <!-- Right side -->
       <div class="nav-right">
+        <!-- SSE / Polling connection indicator -->
+        <div class="nav-sse-pill" id="sse-pill" title="Connection mode">
+          <div class="nav-sse-dot" id="sse-dot"></div>
+          <span id="sse-label">POLL</span>
+        </div>
         <div class="nav-clock" id="clock">--:--:--</div>
         <button class="btn-demo" id="btn-demo" onclick="toggleDemoMode()">⚡ Demo</button>
       </div>

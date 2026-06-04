@@ -10,7 +10,8 @@ const API = {
   agent:      'http://localhost:8002',
   remediator: 'http://localhost:8003',
 };
-const REFRESH_MS = 5000;
+const REFRESH_MS = 5000;   // polling interval for health/analytics (not incidents)
+const SSE_URL    = `${API.agent}/stream/incidents`;
 
 // ── State ─────────────────────────────────────────────────────
 let state = {
@@ -18,6 +19,9 @@ let state = {
   currentPage:     'command',
   currentIncident: null,
   traceVisible:    false,
+  sseActive:       false,    // true when EventSource is connected
+  sseSource:       null,     // the live EventSource instance
+  pollFallbackId:  null,     // setInterval id used in fallback polling
   services: { detector: 'loading', agent: 'loading', remediator: 'loading' },
   alerts:       [],
   incidents:    [],
@@ -288,7 +292,8 @@ async function fetchAll() {
     fetchAgentHealth(),
     fetchRemediatorHealth(),
     fetchAlerts(),
-    fetchIncidents(),
+    // Only fetch incidents via REST when SSE is not active
+    ...(state.sseActive ? [] : [fetchIncidents()]),
     fetchMTTR(),
     fetchCost(),
     fetchSLA(),
@@ -1089,6 +1094,138 @@ function rejectAction() {
   if (rejectBtn)  rejectBtn.style.display  = 'none';
 }
 
+// ── SSE Status Indicator ──────────────────────────────────────
+function setSseStatus(live) {
+  const pill  = document.getElementById('sse-pill');
+  const dot   = document.getElementById('sse-dot');
+  const label = document.getElementById('sse-label');
+  if (!pill) return;
+  pill.classList.toggle('live', live);
+  if (label) label.textContent = live ? 'LIVE' : 'POLL';
+  if (dot)   dot.title = live ? 'Streaming via SSE' : 'Polling every 5s';
+}
+
+// ── Prepend Incident (SSE real-time path) ─────────────────────
+function prependIncident(inc) {
+  // Avoid duplicates — if it already exists in state, skip
+  if (state.incidents.some(i => i.incident_id === inc.incident_id)) return;
+
+  // Add to front of state array so UI is consistent
+  state.incidents.unshift(inc);
+
+  const body = document.getElementById('feed-body');
+  if (!body) return;
+
+  // Remove empty state placeholder if present
+  const empty = body.querySelector('.feed-empty');
+  if (empty) empty.remove();
+
+  // Build the card element
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = incCardHTML(inc, 0).trim();
+  const card = wrapper.firstElementChild;
+  if (!card) return;
+
+  // Animate in: start off-screen right, transition to natural position
+  card.style.transform = 'translateX(-20px)';
+  card.style.opacity   = '0';
+  card.style.transition = 'none';
+
+  body.prepend(card);
+
+  // Trigger transition on next paint
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      card.style.transition = 'transform 0.35s cubic-bezier(0.16,1,0.3,1), opacity 0.3s ease';
+      card.style.transform  = 'translateX(0)';
+      card.style.opacity    = '1';
+    });
+  });
+
+  // Update badge count
+  const badge = document.getElementById('badge-incidents');
+  if (badge) badge.textContent = state.incidents.length;
+  const feedCount = document.getElementById('feed-count');
+  if (feedCount) feedCount.textContent = `${state.incidents.length} total`;
+
+  // Flash the live dot briefly to signal a new event
+  const liveDot = document.querySelector('.live-dot');
+  if (liveDot) {
+    liveDot.style.transform = 'scale(1.8)';
+    liveDot.style.transition = 'transform 0.15s ease';
+    setTimeout(() => {
+      liveDot.style.transform = '';
+    }, 300);
+  }
+
+  showToast(
+    `New incident: ${inc.service} — ${(inc.recommended_action || 'none').replace(/_/g, ' ')}`,
+    inc.requires_human_approval ? 'danger' : 'success'
+  );
+}
+
+// ── SSE Connection ────────────────────────────────────────────
+function initSSE() {
+  if (state.demoMode) return;
+
+  // Close any existing connection cleanly
+  if (state.sseSource) {
+    state.sseSource.close();
+    state.sseSource = null;
+  }
+
+  try {
+    const es = new EventSource(SSE_URL);
+    state.sseSource = es;
+
+    es.onopen = () => {
+      state.sseActive = true;
+      setSseStatus(true);
+      // Cancel fallback polling if it was running
+      if (state.pollFallbackId !== null) {
+        clearInterval(state.pollFallbackId);
+        state.pollFallbackId = null;
+      }
+    };
+
+    es.onmessage = (evt) => {
+      if (!evt.data || evt.data.startsWith(':')) return; // ignore comments/heartbeats
+      try {
+        const inc = JSON.parse(evt.data);
+        if (inc && inc.incident_id) prependIncident(inc);
+      } catch (e) {
+        console.warn('[SSE] Failed to parse incident JSON', e);
+      }
+    };
+
+    es.onerror = () => {
+      // Browser will auto-retry EventSource — if it stays in error, fall back
+      if (es.readyState === EventSource.CLOSED) {
+        state.sseActive = false;
+        state.sseSource = null;
+        setSseStatus(false);
+        activatePollFallback();
+      }
+    };
+  } catch (e) {
+    // EventSource not supported or URL unreachable
+    console.warn('[SSE] EventSource failed, using poll fallback:', e);
+    state.sseActive = false;
+    setSseStatus(false);
+    activatePollFallback();
+  }
+}
+
+function activatePollFallback() {
+  if (state.pollFallbackId !== null) return; // already running
+  state.pollFallbackId = setInterval(async () => {
+    if (state.demoMode) return;
+    await fetchIncidents();
+    renderFeed();
+    if (state.currentPage === 'incidents') renderIncidentsPage();
+  }, REFRESH_MS);
+}
+
 // ── Spring Counter ────────────────────────────────────────────
 function springCounter(el, target) {
   if (!el || target == null || isNaN(target)) return;
@@ -1187,7 +1324,7 @@ function init() {
   bindCardTilt();
   window.addEventListener('resize', () => { setTimeout(drawTrendChart, 100); });
 
-  // Initial fetch — auto-demo if all down
+  // Initial full fetch — auto-demo if all services are down
   fetchAll().then(() => {
     const allDown = Object.values(state.services).every(s => s === 'down');
     if (allDown && !state.demoMode) {
@@ -1195,16 +1332,32 @@ function init() {
         if (!state.demoMode) {
           state.demoMode = true;
           const btn = document.getElementById('btn-demo');
-          if (btn) { btn.textContent = '⬡ Live'; btn.classList.add('active-demo'); }
+          if (btn) { btn.textContent = '\u29c1 Live'; btn.classList.add('active-demo'); }
           loadDemoData();
-          showToast('Services offline — Demo mode auto-activated', 'info');
+          showToast('Services offline \u2014 Demo mode auto-activated', 'info');
         }
       }, 600);
+    } else {
+      // Open SSE stream — falls back to 5s polling automatically on error
+      initSSE();
     }
   });
 
-  // Refresh loop
-  setInterval(fetchAll, REFRESH_MS);
+  // Periodic refresh for health, alerts, and analytics only
+  // Incidents arrive in real-time via SSE; activatePollFallback() handles the fallback case
+  setInterval(() => {
+    if (!state.demoMode) {
+      Promise.allSettled([
+        fetchDetectorHealth(),
+        fetchAgentHealth(),
+        fetchRemediatorHealth(),
+        fetchAlerts(),
+        fetchMTTR(),
+        fetchCost(),
+        fetchSLA(),
+      ]).then(() => { updateGlobalStatus(); renderStatsRow(); renderInfoCards(); });
+    }
+  }, REFRESH_MS);
 }
 
 document.addEventListener('DOMContentLoaded', init);

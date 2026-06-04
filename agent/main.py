@@ -1,9 +1,13 @@
+import asyncio
+import json
 import os
 import time
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from graph import graph
 from incident_store import IncidentStore
 from pydantic import BaseModel
@@ -63,6 +67,32 @@ app = FastAPI(
         "OpenTelemetry-traced LangGraph diagnostics."
     ),
 )
+
+# Allow the local web-ui (file:// or localhost) to reach the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── SSE subscriber registry ────────────────────────────────────────────────────
+# Each connected EventSource client gets its own asyncio.Queue.
+# When an incident is saved we push the serialised payload to every queue.
+_sse_subscribers: set[asyncio.Queue] = set()
+
+
+def _sse_broadcast(payload: dict[str, Any]) -> None:
+    """Push a JSON payload to every active SSE subscriber queue (fire-and-forget)."""
+    data = json.dumps(payload, default=str)
+    dead: set[asyncio.Queue] = set()
+    for q in _sse_subscribers:
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            dead.add(q)  # client is too slow — remove it
+    _sse_subscribers.difference_update(dead)
+
 
 # Global dict to store incident trace reasoning history
 incident_traces: dict[str, list[dict[str, Any]]] = {}
@@ -199,6 +229,23 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
             metric_snapshot=dict(alert.metric_snapshot),
         )
 
+        # Broadcast the new incident to all SSE subscribers in real-time
+        _sse_broadcast(
+            {
+                "incident_id": incident_id,
+                "service": alert.service,
+                "hypothesis": hypothesis,
+                "confidence": confidence,
+                "recommended_action": recommended_action,
+                "requires_human_approval": requires_human_approval,
+                "tokens_used": tokens_used,
+                "mttr_seconds": round(mttr_seconds, 2),
+                "created_at": int(float(alert.timestamp)),
+                "status": "resolved",
+                "trace": trace_timeline,
+            }
+        )
+
         if _prom_enabled:
             INCIDENTS_STORED.set(len(incident_store.list_incidents(limit=10000)))
 
@@ -333,3 +380,48 @@ async def analytics_cost():
     Based on Claude Sonnet pricing: $15.00 per million tokens.
     """
     return incident_store.get_cost_stats()
+
+
+# ── Server-Sent Events ─────────────────────────────────────────────────────────
+
+
+@app.get("/stream/incidents")
+async def stream_incidents(request: Request):
+    """
+    SSE endpoint — streams new incidents to connected browser clients in real-time.
+    Each event is a JSON object matching the incident card shape expected by the UI.
+    The connection is kept alive with a comment heartbeat every 15 seconds so
+    proxies and load-balancers do not close idle connections.
+    """
+    q: asyncio.Queue = asyncio.Queue(maxsize=64)
+    _sse_subscribers.add(q)
+    logger.info("SSE client connected", total_subscribers=len(_sse_subscribers))
+
+    async def event_generator():
+        try:
+            # Send a hello comment so the browser knows the stream is open
+            yield ": connected\n\n"
+            while True:
+                # Check if the client has disconnected
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Wait up to 15 s for a new incident, then send a heartbeat
+                    data = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {data}\n\n"
+                except TimeoutError:
+                    # Keep-alive heartbeat — SSE comment lines are ignored by browsers
+                    yield ": heartbeat\n\n"
+        finally:
+            _sse_subscribers.discard(q)
+            logger.info("SSE client disconnected", total_subscribers=len(_sse_subscribers))
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
