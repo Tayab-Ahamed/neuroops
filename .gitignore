@@ -24,11 +24,9 @@ htmlcov/
 .tox/
 *.cover
 
-# Trained ML model artifacts (regenerated via `make baseline`)
-checkpoints/*.joblib
-checkpoints/*.pt
-checkpoints/*.db
-checkpoints/*.db-journal
+# Trained ML model artifacts (regenerated via `make baseline`) and databases
+checkpoints/
+
 
 # Environment secrets — NEVER commit
 .env

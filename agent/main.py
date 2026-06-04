@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from graph import graph
 from incident_store import IncidentStore
+from memory import IncidentMemory, extract_metric_vector
 from pydantic import BaseModel
 from state import AgentState, Alert
 
@@ -141,6 +142,7 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
         "tokens_used": 0,
         "execute_remediation": execute_remediation,
         "remediation_result": None,
+        "similar_incidents": [],
     }
 
     try:
@@ -227,6 +229,17 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
             resolved_at=t_end,
             mttr_seconds=mttr_seconds,
             metric_snapshot=dict(alert.metric_snapshot),
+        )
+
+        # Store the resolved incident in RAG memory
+        memory = IncidentMemory()
+        vector = extract_metric_vector(alert.metric_snapshot)
+        memory.store(
+            incident_id=incident_id,
+            hypothesis=hypothesis,
+            action=recommended_action,
+            outcome="resolved",
+            metric_vector=vector,
         )
 
         # Broadcast the new incident to all SSE subscribers in real-time

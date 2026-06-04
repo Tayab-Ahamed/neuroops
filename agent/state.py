@@ -27,3 +27,4 @@ class AgentState(TypedDict):
     tokens_used: int | None
     execute_remediation: bool
     remediation_result: dict[str, Any] | None
+    similar_incidents: list[dict]

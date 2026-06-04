@@ -1,6 +1,7 @@
 import uuid
 
 from langchain_core.messages import HumanMessage
+from memory import IncidentMemory, extract_metric_vector
 from pydantic import BaseModel, Field
 from state import AgentState
 from tracing import llm_retry, traced_node
@@ -41,6 +42,10 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
     historian = state.get("historian_findings") or {}
     logs = state.get("log_findings") or {}
 
+    memory = IncidentMemory()
+    metric_vector = extract_metric_vector(alert.metric_snapshot)
+    similar_incidents = memory.retrieve_similar(metric_vector, top_k=3)
+
     from agents.llm import get_llm
 
     llm = get_llm()
@@ -68,7 +73,21 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
             "reasoning": f"Synthesized reasoning: Detective blamed '{detective.get('likely_origin')}', Topologist saw bottleneck '{topologist.get('bottleneck')}', Historian flagged commit '{suspect}', Logs flagged '{logs.get('reasoning')}'.",
             "tool_called": "none",
             "tokens_used": 1500,
+            "similar_incidents": similar_incidents,
         }
+
+    context_str = ""
+    if similar_incidents:
+        formatted = "\n".join(
+            [
+                f"- Incident ID: {inc['incident_id']} (Similarity Score: {inc['similarity_score']:.4f})\n"
+                f"  Hypothesis: {inc['hypothesis']}\n"
+                f"  Action: {inc['action']}\n"
+                f"  Outcome: {inc['outcome']}"
+                for inc in similar_incidents
+            ]
+        )
+        context_str = f"Similar past resolved incidents for context:\n{formatted}\n\n"
 
     messages = [
         HumanMessage(
@@ -87,6 +106,7 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
                 f"{historian}\n\n"
                 f"5. LOG TRIAGE FINDINGS (Container Logs):\n"
                 f"{logs}\n\n"
+                f"{context_str}"
                 f"Synthesize this diagnostic information into a Root Cause Hypothesis.\n"
                 f"Refer to the Remediation Decision Tree:\n"
                 f"- If there's a recent suspect commit within last 60 minutes and service is failing/restarting: Recommend 'rollback'\n"
@@ -110,4 +130,5 @@ async def supervisor_synthesize_node(state: AgentState) -> dict:
         "reasoning": findings.reasoning,
         "tool_called": "none",
         "tokens_used": 1100,
+        "similar_incidents": similar_incidents,
     }

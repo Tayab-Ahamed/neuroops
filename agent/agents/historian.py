@@ -12,9 +12,7 @@ class HistorianOutput(BaseModel):
     suspect_commit: str | None = Field(
         description="The commit hash of a suspect deployment, if any"
     )
-    deploy_time: str | None = Field(
-        description="The timestamp of the suspect deployment, if any"
-    )
+    deploy_time: str | None = Field(description="The timestamp of the suspect deployment, if any")
 
 
 @traced_node("historian")
