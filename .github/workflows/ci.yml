@@ -1,238 +1,201 @@
-name: CI/CD Pipeline
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ── Lint ─────────────────────────────────────────────────────
   lint:
-    name: Lint Codebase
+    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-lint
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: Install linting tools
-        run: |
-          pip install --upgrade pip
-          pip install black isort ruff
+        run: pip install --upgrade pip black isort ruff
 
-      - name: Run black check
+      - name: black
         run: black --check detector/ agent/ remediator/ observability/ benchmarks/
 
-      - name: Run isort check
+      - name: isort
         run: isort --check detector/ agent/ remediator/ observability/ benchmarks/
 
-      - name: Run ruff check
+      - name: ruff
         run: ruff check detector/ agent/ remediator/ observability/ benchmarks/
 
+  # ── Tests ─────────────────────────────────────────────────────
   test-detector:
-    name: Test Detector
+    name: Test / Detector
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-detector-${{ hashFiles('detector/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r detector/requirements.txt
-
-      - name: Run tests
-        run: pytest detector/tests --cov=detector --cov-report=xml
+          restore-keys: ${{ runner.os }}-pip-
+      - run: pip install --upgrade pip && pip install -r detector/requirements.txt
+      - run: pytest detector/tests --cov=detector --cov-report=xml -q
 
   test-agent:
-    name: Test Agent
+    name: Test / Agent
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-agent-${{ hashFiles('agent/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r agent/requirements.txt
-
-      - name: Run tests
-        run: pytest agent/tests --cov=agent --cov-report=xml
+          restore-keys: ${{ runner.os }}-pip-
+      - run: pip install --upgrade pip && pip install -r agent/requirements.txt
+      - run: pytest agent/tests --cov=agent --cov-report=xml -q
 
   test-remediator:
-    name: Test Remediator
+    name: Test / Remediator
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-remediator-${{ hashFiles('remediator/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
+      - run: pip install --upgrade pip && pip install -r remediator/requirements.txt
+      - run: pytest remediator/tests --cov=remediator --cov-report=xml -q
 
+  test-observability:
+    name: Test / Observability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-observability
+          restore-keys: ${{ runner.os }}-pip-
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r remediator/requirements.txt
-
-      - name: Run tests
-        run: pytest remediator/tests --cov=remediator --cov-report=xml
+          pip install rich httpx pydantic structlog pytest pytest-cov click
+      - run: pytest observability/tests --cov=observability --cov-report=xml -q
 
   test-benchmarks:
-    name: Test Benchmarks
+    name: Test / Benchmarks
     runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-benchmarks-${{ hashFiles('benchmarks/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
+      - run: pip install --upgrade pip && pip install -r benchmarks/requirements.txt
+      - run: pytest benchmarks/tests --cov=benchmarks --cov-report=xml -q
 
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r benchmarks/requirements.txt
-
-      - name: Run tests
-        run: pytest benchmarks/tests --cov=benchmarks --cov-report=xml
-
+  # ── Docker Build ──────────────────────────────────────────────
   docker-build:
-    name: Docker Build Matrix
+    name: Docker / ${{ matrix.service }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         service: [detector, agent, remediator]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker Image
-        uses: docker/build-push-action@v5
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
           push: false
-          tags: neuroops-${{ matrix.service }}:latest
+          tags: neuroops-${{ matrix.service }}:ci
 
+  # ── Security ──────────────────────────────────────────────────
   security:
-    name: Security Scan
+    name: Security
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Cache pip
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-security
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: Install Bandit
-        run: |
-          pip install --upgrade pip
-          pip install "bandit[toml]"
+        run: pip install --upgrade pip "bandit[toml]"
 
-      - name: Run Bandit
-        run: bandit -c pyproject.toml -r detector/ agent/ remediator/ observability/ benchmarks/ -x "**/tests/*,**/.venv/*"
+      - name: Bandit
+        run: >
+          bandit -c pyproject.toml -r
+          detector/ agent/ remediator/ observability/ benchmarks/
+          -x "**/tests/*,**/.venv/*"
 
-      - name: TruffleHog Secret Scan
+      - name: TruffleHog
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
 
+  # ── CI Gate ───────────────────────────────────────────────────
   ci-ok:
     name: CI Gate
     runs-on: ubuntu-latest
-    needs: [lint, test-detector, test-agent, test-remediator, test-benchmarks, docker-build, security]
+    needs:
+      - lint
+      - test-detector
+      - test-agent
+      - test-remediator
+      - test-observability
+      - test-benchmarks
+      - docker-build
+      - security
     steps:
-      - name: Success
-        run: echo "CI pipeline completed successfully."
+      - run: echo "All checks passed ✓"

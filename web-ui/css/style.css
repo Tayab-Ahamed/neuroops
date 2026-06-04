@@ -238,7 +238,8 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
    ============================================================ */
 #page-command {
   display: grid;
-  grid-template-columns: 1fr 400px;
+  grid-template-columns: 1fr 380px;
+  grid-template-rows: 1fr;
   gap: var(--sp-lg);
   padding: 88px var(--sp-xl) var(--sp-xl);
   min-height: 100vh;
@@ -247,19 +248,24 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 
 /* ── Left Area ─────────────────────────────────────────────── */
 .command-left {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: var(--sp-lg);
   min-width: 0;
+  overflow: visible;
 }
 
 /* ── Orb Section ─────────────────────────────────────────── */
 .orb-section {
   display: flex;
   align-items: center;
-  padding: var(--sp-2xl) 0;
-  gap: var(--sp-2xl);
+  padding: var(--sp-lg) 0;
+  gap: var(--sp-xl);
   position: relative;
+  overflow: visible;
+  min-height: 280px;
 }
 
 .orb-wrap {
@@ -522,6 +528,8 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
    NEURAL ACTIVITY FEED (Right Panel) — STICKY
    ============================================================ */
 .feed-panel {
+  grid-column: 2;
+  grid-row: 1;
   background: var(--glass-1);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border);
@@ -530,9 +538,9 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
   overflow: hidden;
   position: sticky;
   top: 88px;
-  max-height: calc(100vh - 112px);
+  height: calc(100vh - 112px);
   align-self: start;
-  grid-row: 1;
+  width: 100%;
 }
 
 .feed-panel::before {

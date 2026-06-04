@@ -428,9 +428,7 @@ def test_cli_report_compilation_exception():
     with (
         patch("benchmarks.runner.verify_k8s_reachable", return_value=False),
         patch("benchmarks.runner.verify_service_reachable", return_value=False),
-        patch(
-            "benchmarks.report.compile_report", side_effect=Exception("Disk full")
-        ),
+        patch("benchmarks.report.compile_report", side_effect=Exception("Disk full")),
         patch("benchmarks.runner.logger") as mock_logger,
     ):
 
