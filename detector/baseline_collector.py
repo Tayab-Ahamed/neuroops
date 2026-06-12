@@ -74,8 +74,15 @@ def collect_historical_baseline(
                     try:
                         if val_str != "NaN":
                             value = float(val_str)
-                    except ValueError:
-                        pass
+                    except ValueError as exc:
+                        logger.warning(
+                            "Failed to parse Prometheus historical metric value",
+                            service=raw_service,
+                            metric=feature_name,
+                            timestamp=ts,
+                            raw_value=val_str,
+                            error=str(exc),
+                        )
 
                     if ts not in timestamped_data:
                         timestamped_data[ts] = {
@@ -102,7 +109,14 @@ def collect_historical_baseline(
                         timestamped_data[ts][service][feature_name] = value
 
         except Exception as e:
-            logger.error("Failed executing range query", feature=feature_name, error=str(e))
+            logger.error(
+                "Failed executing range query",
+                feature=feature_name,
+                start_time=start_time.isoformat(),
+                end_time=end_time.isoformat(),
+                error=str(e),
+                exc_info=True,
+            )
 
     # Construct clean MetricWindow objects
     windows: list[MetricWindow] = []

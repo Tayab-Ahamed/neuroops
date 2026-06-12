@@ -24,6 +24,7 @@ class IsolationForestModel:
         ]
         # service_name -> IsolationForest instance
         self.models: dict[str, IsolationForest] = {}
+        self._fitted: bool = False
         logger.info("Initialized IsolationForestModel wrapper", contamination=contamination)
 
     def _extract_features(self, window: MetricWindow) -> np.ndarray:
@@ -36,6 +37,15 @@ class IsolationForestModel:
     def fit(self, windows: list[MetricWindow]):
         """Fits an Isolation Forest model per service using the provided baseline windows."""
         logger.info("Fitting IsolationForest models on baseline data", total_windows=len(windows))
+        if not windows:
+            logger.error("Cannot fit IsolationForest model with empty baseline dataset")
+            raise ValueError("Cannot fit IsolationForest model: windows list is empty.")
+        if len(windows) < 10:
+            logger.error(
+                "Cannot fit IsolationForest model with fewer than 10 samples",
+                total_windows=len(windows),
+            )
+            raise ValueError("Cannot fit IsolationForest model: at least 10 samples are required.")
 
         # Group windows by service
         service_windows: dict[str, list[MetricWindow]] = {}
@@ -62,6 +72,7 @@ class IsolationForestModel:
             clf.fit(X)
             self.models[service] = clf
             logger.info("Trained model for service", service=service, shape=X.shape)
+        self._fitted = True
 
     def score(self, window: MetricWindow) -> float:
         """Returns the anomaly score for the window (-1 to 0, lower = more anomalous).
@@ -82,6 +93,13 @@ class IsolationForestModel:
 
     def predict(self, window: MetricWindow) -> bool:
         """Predicts whether the window is anomalous. Returns True if anomalous, False otherwise."""
+        if not self._fitted:
+            logger.error(
+                "Cannot predict before IsolationForest model is fitted",
+                service=window.service_name,
+                timestamp=window.timestamp,
+            )
+            raise RuntimeError("Model not fitted. Call fit() first.")
         service = window.service_name
         clf = self.models.get(service)
         if not clf:
@@ -108,10 +126,22 @@ class IsolationForestModel:
         """Deserializes and loads the models from the specified path."""
         logger.info("Loading IsolationForestModel checkpoints", path=path)
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Model file not found at {path}")
+            full_path = os.path.abspath(path)
+            logger.error("IsolationForest checkpoint file not found", path=full_path)
+            raise FileNotFoundError(f"Model file not found at {full_path}")
 
-        data = joblib.load(path)
+        try:
+            data = joblib.load(path)
+        except (OSError, EOFError, ValueError, TypeError, ImportError) as exc:
+            logger.error(
+                "Failed to load IsolationForest checkpoint",
+                path=os.path.abspath(path),
+                error=str(exc),
+                exc_info=True,
+            )
+            raise RuntimeError(f"Failed to load IsolationForest model from {path}: {exc}") from exc
         self.contamination = data.get("contamination", 0.05)
         self.features = data.get("features", self.features)
         self.models = data.get("models", {})
+        self._fitted = True
         logger.info("Successfully loaded models", services=list(self.models.keys()))

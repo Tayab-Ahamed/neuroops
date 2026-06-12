@@ -1,8 +1,14 @@
+import json
 import os
+import socket
+import urllib.parse
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Response
+import anyio
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 from pydantic import BaseModel
 
 # Import actions, verifier, and human loop
@@ -60,8 +66,6 @@ except ImportError:
     _prom_enabled = False
     _prom_registry = None
 
-app = FastAPI(title="NeuroOps Remediation Engine API", version="1.0.0")
-
 # Global history registry of actions taken
 actions_history: list[ActionResult] = []
 # Global registry of remediation execution timestamps per service for anti-flapping
@@ -97,6 +101,97 @@ class RemediationRequest(BaseModel):
     auto_approve: bool = False
 
 
+class HealthResponse(BaseModel):
+    status: str
+    actions_count: int
+    k8s_configured: bool
+
+
+class SlackInteractionResponse(BaseModel):
+    status: str
+    message: str
+
+
+def internal_error(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"error": "internal_server_error", "message": detail},
+    )
+
+
+def normalize_action(action: str) -> str:
+    return action.strip().lower()
+
+
+def is_known_action(action: str) -> bool:
+    action_type = normalize_action(action)
+    return (
+        action_type == "none"
+        or "restart" in action_type
+        or "rollback" in action_type
+        or "scale" in action_type
+        or "patch_configmap" in action_type
+        or "open_pr" in action_type
+        or "open_github_pr" in action_type
+    )
+
+
+def _tcp_connect_check(url: str, service_name: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        logger.warning("Startup dependency URL is invalid", service=service_name, url=url)
+        return
+    try:
+        with socket.create_connection((host, port), timeout=3.0):
+            logger.info("Startup dependency TCP check succeeded", service=service_name, url=url)
+    except OSError as exc:
+        logger.warning(
+            "Startup dependency TCP check failed",
+            service=service_name,
+            url=url,
+            timeout_seconds=3.0,
+            error=str(exc),
+        )
+
+
+async def validate_startup_config() -> None:
+    detector_url = os.getenv("DETECTOR_URL")
+    agent_url = os.getenv("AGENT_URL")
+
+    if not detector_url:
+        detector_url = "http://localhost:8001"
+        os.environ["DETECTOR_URL"] = detector_url
+        logger.warning("DETECTOR_URL missing at startup; using local default", value=detector_url)
+    if not agent_url:
+        agent_url = "http://localhost:8002"
+        os.environ["AGENT_URL"] = agent_url
+        logger.warning("AGENT_URL missing at startup; using local default", value=agent_url)
+    if os.getenv("HUMAN_APPROVAL_REQUIRED") is None:
+        os.environ["HUMAN_APPROVAL_REQUIRED"] = "true"
+        logger.warning(
+            "HUMAN_APPROVAL_REQUIRED missing; defaulting to safe mode",
+            HUMAN_APPROVAL_REQUIRED=True,
+        )
+
+    await anyio.to_thread.run_sync(_tcp_connect_check, detector_url, "detector")
+    await anyio.to_thread.run_sync(_tcp_connect_check, agent_url, "agent")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await validate_startup_config()
+    yield
+
+
+app = FastAPI(
+    title="NeuroOps Remediation Engine API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
 def extract_service_name(hypothesis: str, reasoning: str) -> str:
     """Helper to parse affected service name from hypothesis/reasoning text."""
     combined = (hypothesis + " " + reasoning).lower()
@@ -112,8 +207,39 @@ def extract_service_name(hypothesis: str, reasoning: str) -> str:
 from remediator.chatops import send_slack_alert
 
 
-@app.post("/remediate", response_model=ActionResult)
+@app.post(
+    "/remediate",
+    response_model=ActionResult,
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
 async def remediate(request: RemediationRequest):
+    if not is_known_action(request.recommended_action):
+        logger.warning(
+            "Rejected remediation request with unknown action",
+            incident_id=request.incident_id,
+            action=request.recommended_action,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown remediation action",
+        )
+    try:
+        return await _remediate_impl(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Unexpected error while processing remediation request",
+            incident_id=request.incident_id,
+            action=request.recommended_action,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise internal_error("Failed to process remediation request")
+
+
+async def _remediate_impl(request: RemediationRequest) -> ActionResult:
     """
     Executes the recommended remediation action based on the RCA hypothesis.
     Invokes human-in-the-loop CLI prompts for actions requiring approval.
@@ -280,9 +406,11 @@ async def remediate(request: RemediationRequest):
                         )
                     else:
                         pod_name = f"{service}-pod-fallback"
-                except Exception as e:
+                except ApiException as e:
                     logger.warning(
-                        "Could not query pods to resolve name, falling back", error=str(e)
+                        "Could not query pods to resolve name, falling back",
+                        status=e.status,
+                        reason=e.reason,
                     )
                     pod_name = f"{service}-pod-fallback"
             else:
@@ -378,49 +506,74 @@ async def remediate(request: RemediationRequest):
     return result
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
 async def health():
-    return {
-        "status": "ok",
-        "actions_count": len(remediation_store.list_actions(limit=1000)),
-        "k8s_configured": k8s_configured,
-    }
+    try:
+        return {
+            "status": "ok",
+            "actions_count": len(remediation_store.list_actions(limit=1000)),
+            "k8s_configured": k8s_configured,
+        }
+    except Exception as exc:
+        logger.error("Failed to return remediator health", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return remediator health")
 
 
-@app.get("/metrics")
+@app.get("/metrics", status_code=status.HTTP_200_OK)
 async def prometheus_metrics():
     """Exposes Prometheus-format metrics for scraping by Grafana / kube-prometheus."""
-    if not _prom_enabled:
-        return Response(content="# prometheus_client not installed", media_type="text/plain")
-    return Response(
-        content=generate_latest(_prom_registry),
-        media_type=CONTENT_TYPE_LATEST,
-    )
-
-
-@app.get("/actions", response_model=list[ActionResult])
-async def get_actions():
-    """Returns the history of all remediation actions executed."""
-    if actions_history:
-        return actions_history
-    persisted = remediation_store.list_actions()
-    return [
-        ActionResult(
-            success=item["success"],
-            action_taken=item["action_taken"],
-            duration_seconds=item["duration_seconds"],
+    try:
+        if not _prom_enabled:
+            return Response(content="# prometheus_client not installed", media_type="text/plain")
+        return Response(
+            content=generate_latest(_prom_registry),
+            media_type=CONTENT_TYPE_LATEST,
         )
-        for item in persisted
-    ]
+    except Exception as exc:
+        logger.error("Failed to generate remediator metrics", error=str(exc), exc_info=True)
+        raise internal_error("Failed to generate remediator metrics")
 
 
-import json
-import urllib.parse
+@app.get(
+    "/actions",
+    response_model=list[ActionResult],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+async def get_actions(
+    limit: int = Query(default=50, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """Returns the history of all remediation actions executed."""
+    try:
+        if actions_history:
+            return actions_history[offset : offset + limit]
+        persisted = remediation_store.list_actions(limit=limit, offset=offset)
+        return [
+            ActionResult(
+                success=item["success"],
+                action_taken=item["action_taken"],
+                duration_seconds=item["duration_seconds"],
+                metadata=item["metadata"],
+            )
+            for item in persisted
+        ]
+    except Exception as exc:
+        logger.error(
+            "Failed to return remediation actions",
+            limit=limit,
+            offset=offset,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise internal_error("Failed to return remediation actions")
 
-from fastapi import Request
 
-
-@app.post("/slack/interactions")
+@app.post(
+    "/slack/interactions",
+    response_model=SlackInteractionResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def slack_interactions(request: Request):
     """Receives interactive button clicks from Slack approval notifications."""
     try:
@@ -452,6 +605,13 @@ async def slack_interactions(request: Request):
             "status": "ok",
             "message": f"Remediation {action_val} parsed for incident {incident_id}",
         }
-    except Exception as e:
-        logger.error("Failed to parse Slack interaction payload", error=str(e))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        logger.warning("Failed to parse Slack interaction payload", error=str(e))
         raise HTTPException(status_code=400, detail="Invalid interaction payload")
+    except Exception as exc:
+        logger.error(
+            "Unexpected Slack interaction handling failure",
+            error=str(exc),
+            exc_info=True,
+        )
+        raise internal_error("Failed to process Slack interaction")

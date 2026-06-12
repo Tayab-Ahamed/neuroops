@@ -1,14 +1,23 @@
 import time
 
 from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 
-from remediator.actions import ActionResult, k8s_configured, logger
+from remediator.actions import (
+    ActionResult,
+    get_action_timeout_seconds,
+    is_not_found,
+    k8s_configured,
+    logger,
+    skipped_not_found,
+    timeout_result,
+)
 
 
 def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> ActionResult:
     """
     Scales a deployment to the requested replica count
-    and waits up to 60 seconds for all replicas to be Ready.
+    and waits for all replicas to be Ready.
 
     [!] HPA conflict warning (production guidance)
     -----------------------------------------------
@@ -60,16 +69,32 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
         apps_v1 = client.AppsV1Api()
 
         # 1. Check current replicas to check for early exit/idempotency
-        dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
+        try:
+            dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
+        except ApiException as exc:
+            if is_not_found(exc):
+                logger.warning(
+                    "Scale skipped because target deployment was not found",
+                    namespace=namespace,
+                    deployment=deployment_name,
+                    status=exc.status,
+                )
+                return skipped_not_found(start_time)
+            raise
+
         current_desired = dep.spec.replicas
 
         if current_desired == replicas:
             logger.info(
-                "Deployment is already scaled to target replicas. Checking status...",
+                "Deployment is already scaled to target replicas",
                 deployment=deployment_name,
                 replicas=replicas,
             )
-            # Idempotency check: if already at target, we just verify ready replicas
+            return ActionResult(
+                success=True,
+                action_taken="no-op — already at target replicas",
+                duration_seconds=time.time() - start_time,
+            )
         else:
             # 2. Patch the replica count directly on the Deployment.
             #
@@ -87,8 +112,8 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                 name=deployment_name, namespace=namespace, body=body
             )
 
-        # 3. Wait up to 60 seconds for the ready replicas to match the target replicas
-        timeout = 60
+        # 3. Wait for the ready replicas to match the target replicas
+        timeout = get_action_timeout_seconds()
         scale_complete = False
 
         while time.time() - start_time < timeout:
@@ -114,8 +139,14 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                     if ready_replicas == replicas and updated_replicas == replicas:
                         scale_complete = True
                         break
-            except Exception as e:
-                logger.warning("Error checking deployment replica scaling status", error=str(e))
+            except ApiException as exc:
+                logger.warning(
+                    "Error checking deployment replica scaling status",
+                    namespace=namespace,
+                    deployment=deployment_name,
+                    status=exc.status,
+                    reason=exc.reason,
+                )
 
         duration = time.time() - start_time
         if scale_complete:
@@ -137,17 +168,22 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                 replicas=replicas,
                 duration=duration,
             )
-            return ActionResult(
-                success=False,
-                action_taken=f"Scaled deployment '{deployment_name}' to {replicas} replicas, but verification timed out (60s).",
-                duration_seconds=duration,
-            )
+            return timeout_result(start_time)
 
-    except Exception as e:
+    except ApiException as exc:
         duration = time.time() - start_time
-        logger.error("Failed to scale deployment", deployment=deployment_name, error=str(e))
+        logger.error(
+            "Failed to scale deployment",
+            namespace=namespace,
+            deployment=deployment_name,
+            status=exc.status,
+            reason=exc.reason,
+        )
         return ActionResult(
             success=False,
-            action_taken=f"Failed to scale deployment '{deployment_name}' in namespace '{namespace}': {str(e)}",
+            action_taken=(
+                f"Failed to scale deployment '{deployment_name}' in namespace "
+                f"'{namespace}': {exc.reason}"
+            ),
             duration_seconds=duration,
         )

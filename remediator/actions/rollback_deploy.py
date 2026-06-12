@@ -1,14 +1,23 @@
 import time
 
 from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 
-from remediator.actions import ActionResult, k8s_configured, logger
+from remediator.actions import (
+    ActionResult,
+    get_action_timeout_seconds,
+    is_not_found,
+    k8s_configured,
+    logger,
+    skipped_not_found,
+    timeout_result,
+)
 
 
 def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
     """
     Rolls back a deployment to its previous revision (like rollout undo)
-    and waits up to 60 seconds for the rollout to complete.
+    and waits for the rollout to complete.
     """
     logger.info(
         "Starting rollback_deployment action", namespace=namespace, deployment_name=deployment_name
@@ -33,8 +42,21 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
         apps_v1 = client.AppsV1Api()
 
         # 1. Read deployment to get current generation and annotations
-        dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
-        current_revision = dep.metadata.annotations.get("deployment.kubernetes.io/revision")
+        try:
+            dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
+        except ApiException as exc:
+            if is_not_found(exc):
+                logger.warning(
+                    "Rollback skipped because target deployment was not found",
+                    namespace=namespace,
+                    deployment=deployment_name,
+                    status=exc.status,
+                )
+                return skipped_not_found(start_time)
+            raise
+
+        annotations = dep.metadata.annotations or {}
+        current_revision = annotations.get("deployment.kubernetes.io/revision")
         if not current_revision:
             logger.warning(
                 "No current revision found in deployment annotations, assuming 1",
@@ -43,6 +65,11 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
             current_revision = "1"
 
         current_rev_int = int(current_revision)
+        current_images = [
+            container.image
+            for container in (dep.spec.template.spec.containers or [])
+            if getattr(container, "image", None)
+        ]
 
         # 2. Get all ReplicaSets for this deployment
         match_labels = dep.spec.selector.match_labels or {}
@@ -52,7 +79,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
 
         revisions = []
         for rs in rs_list.items:
-            rev = rs.metadata.annotations.get("deployment.kubernetes.io/revision")
+            rev = (rs.metadata.annotations or {}).get("deployment.kubernetes.io/revision")
             if rev is not None:
                 revisions.append((int(rev), rs))
 
@@ -78,7 +105,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
             # Fallback to the lowest available revision if no revision is less than current
             prev_rs = revisions[0][1]
 
-        prev_rev_num = prev_rs.metadata.annotations.get("deployment.kubernetes.io/revision")
+        prev_rev_num = (prev_rs.metadata.annotations or {}).get("deployment.kubernetes.io/revision")
         logger.info(
             "Found target revision ReplicaSet for rollback",
             deployment=deployment_name,
@@ -106,8 +133,8 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
         logger.info("Patching deployment spec template for rollback", deployment=deployment_name)
         apps_v1.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=body)
 
-        # 4. Wait up to 60 seconds for rollout to complete
-        timeout = 60
+        # 4. Wait for rollout to complete
+        timeout = get_action_timeout_seconds()
         rollout_complete = False
 
         while time.time() - start_time < timeout:
@@ -136,8 +163,14 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                 ):
                     rollout_complete = True
                     break
-            except Exception as e:
-                logger.warning("Error checking deployment rollout status", error=str(e))
+            except ApiException as exc:
+                logger.warning(
+                    "Error checking deployment rollout status",
+                    namespace=namespace,
+                    deployment=deployment_name,
+                    status=exc.status,
+                    reason=exc.reason,
+                )
 
         duration = time.time() - start_time
         if rollout_complete:
@@ -153,6 +186,11 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                     f"from revision {current_revision} to revision {prev_rev_num} and verified healthy rollout."
                 ),
                 duration_seconds=duration,
+                metadata={
+                    "current_image_tags": current_images,
+                    "from_revision": str(current_revision),
+                    "to_revision": str(prev_rev_num),
+                },
             )
         else:
             logger.error(
@@ -160,22 +198,28 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                 deployment=deployment_name,
                 duration=duration,
             )
-            return ActionResult(
-                success=False,
-                action_taken=(
-                    f"Initiated rollback on deployment '{deployment_name}' from revision {current_revision} "
-                    f"to revision {prev_rev_num}, but rollout status verification timed out (60s)."
-                ),
-                duration_seconds=duration,
-            )
+            result = timeout_result(start_time)
+            result.metadata = {
+                "current_image_tags": current_images,
+                "from_revision": str(current_revision),
+                "to_revision": str(prev_rev_num),
+            }
+            return result
 
-    except Exception as e:
+    except ApiException as exc:
         duration = time.time() - start_time
         logger.error(
-            "Failed to execute rollback_deployment", deployment=deployment_name, error=str(e)
+            "Failed to execute rollback_deployment",
+            namespace=namespace,
+            deployment=deployment_name,
+            status=exc.status,
+            reason=exc.reason,
         )
         return ActionResult(
             success=False,
-            action_taken=f"Failed to rollback deployment '{deployment_name}' in namespace '{namespace}': {str(e)}",
+            action_taken=(
+                f"Failed to rollback deployment '{deployment_name}' in namespace "
+                f"'{namespace}': {exc.reason}"
+            ),
             duration_seconds=duration,
         )

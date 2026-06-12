@@ -1,7 +1,7 @@
 import os
 import time
 
-from github import Github
+from github import Github, GithubException
 
 from remediator.actions import ActionResult, github_configured, logger
 
@@ -46,7 +46,7 @@ def open_pr(repo: str, title: str, body: str, branch: str, files: dict[str, str]
         logger.info("Creating new branch ref", branch=branch, sha=base_sha)
         try:
             r.create_git_ref(ref=ref_path, sha=base_sha)
-        except Exception as e:
+        except GithubException as e:
             # If the branch already exists, we will reuse it or warn
             logger.warning(
                 "Branch ref might already exist, attempting to proceed", branch=branch, error=str(e)
@@ -65,7 +65,7 @@ def open_pr(repo: str, title: str, body: str, branch: str, files: dict[str, str]
                     sha=contents.sha,
                     branch=branch,
                 )
-            except Exception:
+            except GithubException:
                 # File does not exist, create it
                 logger.info("Creating new file in branch", filepath=filepath, branch=branch)
                 r.create_file(
@@ -89,7 +89,7 @@ def open_pr(repo: str, title: str, body: str, branch: str, files: dict[str, str]
             duration_seconds=duration,
         )
 
-    except Exception as e:
+    except GithubException as e:
         duration = time.time() - start_time
         logger.error("Failed to open GitHub Pull Request", repo=repo, error=str(e))
         return ActionResult(

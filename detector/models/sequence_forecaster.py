@@ -127,12 +127,22 @@ class SequenceForecastModel:
     def predict(self, sequence: list[MetricWindow], next_window: MetricWindow) -> bool:
         """Predicts whether the next window is a sequential anomaly based on threshold exceedance."""
         service = next_window.service_name
+        if len(sequence) < self.sequence_length:
+            logger.debug(
+                "Skipping sequence anomaly prediction due to insufficient samples",
+                service=service,
+                timestamp=next_window.timestamp,
+                sample_count=len(sequence),
+                required_samples=self.sequence_length,
+            )
+            return None
         model = self.models.get(service)
         threshold = self.thresholds.get(service)
         if not model or threshold is None:
             return False
 
-        mse = self.score(sequence, next_window)
+        with np.errstate(all="ignore"):
+            mse = self.score(sequence, next_window)
         is_anom = mse > threshold
         if is_anom:
             logger.warn("Sequence anomaly detected", service=service, mse=mse, threshold=threshold)

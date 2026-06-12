@@ -28,3 +28,4 @@ class AgentState(TypedDict):
     execute_remediation: bool
     remediation_result: dict[str, Any] | None
     similar_incidents: list[dict]
+    complexity_score: float

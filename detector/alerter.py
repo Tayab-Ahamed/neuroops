@@ -1,3 +1,5 @@
+import math
+import threading
 import time
 import uuid
 
@@ -28,6 +30,8 @@ class Alerter:
         self.deduplication_window = deduplication_window_seconds
         # service_name -> last alert timestamp
         self.last_alerted: dict[str, float] = {}
+        self._dedup_lock = threading.Lock()
+        self._issued_alert_ids: set[str] = set()
         logger.info("Initialized Alerter", deduplication_window=deduplication_window_seconds)
 
     def process_window(
@@ -37,21 +41,32 @@ class Alerter:
         if not is_anomaly:
             return None
 
+        if anomaly_score is None or math.isnan(anomaly_score):
+            logger.warning(
+                "Skipping alert creation due to invalid anomaly score",
+                service=window.service_name,
+                timestamp=window.timestamp,
+                anomaly_score=anomaly_score,
+            )
+            return None
+
         service = window.service_name
         current_time = time.time()
 
         # 1. Deduplication check
-        last_alert_time = self.last_alerted.get(service, 0.0)
-        time_since_last_alert = current_time - last_alert_time
+        with self._dedup_lock:
+            last_alert_time = self.last_alerted.get(service, 0.0)
+            time_since_last_alert = current_time - last_alert_time
 
-        if time_since_last_alert < self.deduplication_window:
-            logger.info(
-                "Alert suppressed due to deduplication",
-                service=service,
-                time_since_last_alert=time_since_last_alert,
-                deduplication_window=self.deduplication_window,
-            )
-            return None
+            if time_since_last_alert < self.deduplication_window:
+                logger.info(
+                    "Alert suppressed due to deduplication",
+                    service=service,
+                    timestamp=window.timestamp,
+                    time_since_last_alert=time_since_last_alert,
+                    deduplication_window=self.deduplication_window,
+                )
+                return None
 
         # 2. Severity classification
         error_rate = window.feature_vector.get("error_rate", 0.0)
@@ -75,10 +90,12 @@ class Alerter:
             metric_snapshot=window.feature_vector,
             anomaly_score=anomaly_score,
         )
+        self.ensure_unique_alert_id(alert)
 
         # Update last alerted timestamp for deduplication (only for P1/P2, or all alerts)
         # Suppress alerts for the same service within 5 minutes (standard behavior for all fired alerts)
-        self.last_alerted[service] = current_time
+        with self._dedup_lock:
+            self.last_alerted[service] = current_time
 
         logger.info(
             "New alert classified and fired",
@@ -90,3 +107,21 @@ class Alerter:
             pod_restarts=pod_restarts,
         )
         return alert
+
+    def ensure_unique_alert_id(
+        self, alert: Alert, active_alerts: list[Alert] | None = None
+    ) -> None:
+        """Regenerates the alert ID if it collides with already issued or active alerts."""
+        active_ids = {existing.id for existing in active_alerts or []}
+        with self._dedup_lock:
+            while alert.id in active_ids or (
+                active_alerts is None and alert.id in self._issued_alert_ids
+            ):
+                logger.warning(
+                    "Alert ID collision detected; regenerating alert ID",
+                    collided_id=alert.id,
+                    service=alert.service,
+                    timestamp=alert.timestamp,
+                )
+                alert.id = str(uuid.uuid4())
+            self._issued_alert_ids.add(alert.id)

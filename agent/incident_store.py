@@ -57,9 +57,14 @@ class IncidentStore:
                         resolved_at REAL,
                         mttr_seconds REAL,
                         metric_snapshot_json TEXT,
+                        model_used TEXT,
                         created_at REAL NOT NULL
                     )
                     """)
+                try:
+                    conn.execute("ALTER TABLE incidents ADD COLUMN model_used TEXT")
+                except sqlite3.OperationalError:
+                    pass
                 conn.commit()
 
     def save_incident(
@@ -80,6 +85,7 @@ class IncidentStore:
         resolved_at: float | None = None,
         mttr_seconds: float | None = None,
         metric_snapshot: dict[str, float] | None = None,
+        model_used: str | None = None,
     ) -> None:
         with self._lock:
             with self._connect() as conn:
@@ -90,8 +96,8 @@ class IncidentStore:
                         recommended_action, requires_human_approval, reasoning,
                         tokens_used, remediation_result, trace_json,
                         alert_timestamp, resolved_at, mttr_seconds,
-                        metric_snapshot_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        metric_snapshot_json, model_used, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         incident_id,
@@ -109,6 +115,7 @@ class IncidentStore:
                         resolved_at,
                         mttr_seconds,
                         json.dumps(metric_snapshot) if metric_snapshot else None,
+                        model_used,
                         time.time(),
                     ),
                 )
@@ -131,7 +138,7 @@ class IncidentStore:
                     SELECT incident_id, service, alert_id, hypothesis, confidence,
                            recommended_action, requires_human_approval, reasoning,
                            tokens_used, remediation_result, created_at,
-                           alert_timestamp, resolved_at, mttr_seconds
+                           alert_timestamp, resolved_at, mttr_seconds, model_used
                     FROM incidents
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -158,6 +165,7 @@ class IncidentStore:
                     "alert_timestamp": row["alert_timestamp"],
                     "resolved_at": row["resolved_at"],
                     "mttr_seconds": row["mttr_seconds"],
+                    "model_used": row["model_used"],
                 }
             )
         return incidents
@@ -258,6 +266,74 @@ class IncidentStore:
                 round((total_tokens / n) * TOKEN_COST_RATE, 6) if n else 0.0
             ),
             "token_cost_rate_per_million": 15.0,
+        }
+
+    def get_detailed_cost_stats(self) -> dict[str, Any]:
+        """
+        Computes detailed token costs using dynamic model routing rates.
+        Haiku: $0.00025 / 1k input, $0.00125 / 1k output
+        Sonnet: $0.003 / 1k input, $0.015 / 1k output
+        Assumes standard split: 80% input tokens, 20% output tokens.
+        """
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT model_used, tokens_used FROM incidents WHERE tokens_used IS NOT NULL"
+                ).fetchall()
+
+        total_tokens = 0
+        total_cost_usd = 0.0
+
+        haiku_calls = 0
+        haiku_tokens = 0
+        haiku_cost = 0.0
+
+        sonnet_calls = 0
+        sonnet_tokens = 0
+        sonnet_cost = 0.0
+
+        for row in rows:
+            model = row["model_used"] or "claude-sonnet-4-6"
+            tokens = row["tokens_used"]
+
+            total_tokens += tokens
+            input_tokens = tokens * 0.8
+            output_tokens = tokens * 0.2
+
+            if "haiku" in model.lower():
+                haiku_calls += 1
+                haiku_tokens += tokens
+                cost = (input_tokens * 0.00025 / 1000.0) + (output_tokens * 0.00125 / 1000.0)
+                haiku_cost += cost
+                total_cost_usd += cost
+            else:
+                sonnet_calls += 1
+                sonnet_tokens += tokens
+                cost = (input_tokens * 0.003 / 1000.0) + (output_tokens * 0.015 / 1000.0)
+                sonnet_cost += cost
+                total_cost_usd += cost
+
+        # Savings if all had used Sonnet:
+        # Sonnet rate = tokens * (0.8 * 0.003 + 0.2 * 0.015) / 1000.0 = tokens * 0.0000054
+        cost_if_all_sonnet = total_tokens * 0.0000054
+        savings = cost_if_all_sonnet - total_cost_usd
+
+        return {
+            "total_tokens": total_tokens,
+            "total_cost_usd": round(total_cost_usd, 6),
+            "model_breakdown": {
+                "haiku": {
+                    "calls": haiku_calls,
+                    "tokens": haiku_tokens,
+                    "cost_usd": round(haiku_cost, 6),
+                },
+                "sonnet": {
+                    "calls": sonnet_calls,
+                    "tokens": sonnet_tokens,
+                    "cost_usd": round(sonnet_cost, 6),
+                },
+            },
+            "estimated_savings_vs_sonnet_only_usd": round(max(0.0, savings), 6),
         }
 
     def get_sla_status(self, sla_threshold_seconds: float = 300.0) -> dict[str, Any]:
@@ -367,3 +443,296 @@ class IncidentStore:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[:top_k]
+
+    def get_incident(self, incident_id: str) -> dict[str, Any] | None:
+        """Retrieves the full details of a single incident, including parsed trace and metric snapshot."""
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM incidents WHERE incident_id = ?",
+                    (incident_id,),
+                ).fetchone()
+        if not row:
+            return None
+        return {
+            "incident_id": row["incident_id"],
+            "service": row["service"],
+            "alert_id": row["alert_id"],
+            "hypothesis": row["hypothesis"],
+            "confidence": row["confidence"],
+            "recommended_action": row["recommended_action"],
+            "requires_human_approval": bool(row["requires_human_approval"]),
+            "reasoning": row["reasoning"],
+            "tokens_used": row["tokens_used"],
+            "remediation_result": (
+                json.loads(row["remediation_result"]) if row["remediation_result"] else None
+            ),
+            "trace": json.loads(row["trace_json"]) if row["trace_json"] else [],
+            "created_at": row["created_at"],
+            "alert_timestamp": row["alert_timestamp"],
+            "resolved_at": row["resolved_at"],
+            "mttr_seconds": row["mttr_seconds"],
+            "metric_snapshot": (
+                json.loads(row["metric_snapshot_json"]) if row["metric_snapshot_json"] else None
+            ),
+            "model_used": row["model_used"],
+        }
+
+    def get_mttr_analytics(self) -> dict[str, Any]:
+        """
+        Group all resolved incidents by chaos scenario (parsing IDs and hypotheses)
+        and calculate speedups vs baseline constants.
+        """
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT incident_id, hypothesis, mttr_seconds FROM incidents WHERE mttr_seconds IS NOT NULL"
+                ).fetchall()
+
+        if not rows:
+            return {
+                "per_scenario": [],
+                "overall_avg_mttr_seconds": 0.0,
+                "p50_mttr_seconds": 0.0,
+                "p95_mttr_seconds": 0.0,
+                "total_incidents": 0,
+            }
+
+        baseline_constants = {
+            "pod-delete": 300.0,
+            "cpu-hog": 600.0,
+            "memory-hog": 900.0,
+            "network-latency": 1200.0,
+            "disk-fill": 1800.0,
+        }
+
+        def get_scenario(inc_id: str, hyp: str) -> str:
+            # First try parsing from incident_id (inc-{scenario}-{run})
+            parts = inc_id.split("-")
+            if len(parts) >= 3 and parts[0] == "inc":
+                sc = parts[1]
+                if sc in baseline_constants:
+                    return sc
+            h_lower = hyp.lower()
+            for sc in baseline_constants:
+                if sc in h_lower:
+                    return sc
+            # Look for friendly patterns in hypothesis
+            if "pod delete" in h_lower or "delete pod" in h_lower:
+                return "pod-delete"
+            if "cpu" in h_lower or "cpu-hog" in h_lower:
+                return "cpu-hog"
+            if "memory" in h_lower or "memory-hog" in h_lower:
+                return "memory-hog"
+            if "network" in h_lower or "latency" in h_lower:
+                return "network-latency"
+            if "disk" in h_lower or "fill" in h_lower:
+                return "disk-fill"
+            return "unknown"
+
+        scenarios_data = {}
+        all_mttr = []
+
+        for row in rows:
+            inc_id = row["incident_id"]
+            hyp = row["hypothesis"]
+            mttr = row["mttr_seconds"]
+            all_mttr.append(mttr)
+
+            sc = get_scenario(inc_id, hyp)
+            if sc not in scenarios_data:
+                scenarios_data[sc] = []
+            scenarios_data[sc].append(mttr)
+
+        per_scenario = []
+        for sc, mttrs in scenarios_data.items():
+            if sc == "unknown":
+                continue
+            avg_agent = sum(mttrs) / len(mttrs)
+            baseline = baseline_constants.get(sc, 600.0)
+            speedup = baseline / avg_agent if avg_agent > 0 else 1.0
+            per_scenario.append(
+                {
+                    "scenario": sc,
+                    "avg_agent_mttr_seconds": round(avg_agent, 2),
+                    "run_count": len(mttrs),
+                    "baseline_mttr_seconds": baseline,
+                    "speedup": round(speedup, 2),
+                }
+            )
+
+        def percentile(data: list[float], p: float) -> float:
+            if not data:
+                return 0.0
+            sorted_data = sorted(data)
+            index = (len(sorted_data) - 1) * p
+            lower = math.floor(index)
+            upper = math.ceil(index)
+            if lower == upper:
+                return sorted_data[lower]
+            return sorted_data[lower] * (upper - index) + sorted_data[upper] * (index - lower)
+
+        overall_avg = sum(all_mttr) / len(all_mttr)
+
+        return {
+            "per_scenario": per_scenario,
+            "overall_avg_mttr_seconds": round(overall_avg, 2),
+            "p50_mttr_seconds": round(percentile(all_mttr, 0.5), 2),
+            "p95_mttr_seconds": round(percentile(all_mttr, 0.95), 2),
+            "total_incidents": len(all_mttr),
+        }
+
+    def get_cost_analytics(self) -> dict[str, Any]:
+        """
+        Query IncidentStore for model_used and tokens_used, calculating costs and savings.
+        Cost rates:
+          haiku - $0.00025/1k input, $0.00125/1k output
+          sonnet - $0.003/1k input, $0.015/1k output
+        Assumes standard split: 80% input tokens, 20% output tokens.
+        """
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT model_used, tokens_used FROM incidents WHERE tokens_used IS NOT NULL"
+                ).fetchall()
+
+        if not rows:
+            return {
+                "total_cost_usd": 0.0,
+                "total_tokens": 0,
+                "incidents_counted": 0,
+                "model_breakdown": {
+                    "haiku": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+                    "sonnet": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+                },
+                "savings_vs_all_sonnet_usd": 0.0,
+                "no_data": True,
+            }
+
+        total_tokens = 0
+        total_cost_usd = 0.0
+
+        haiku_calls = 0
+        haiku_input = 0
+        haiku_output = 0
+        haiku_cost = 0.0
+
+        sonnet_calls = 0
+        sonnet_input = 0
+        sonnet_output = 0
+        sonnet_cost = 0.0
+
+        for row in rows:
+            model = row["model_used"] or "claude-sonnet-4-6"
+            tokens = row["tokens_used"]
+            total_tokens += tokens
+
+            input_tokens = tokens * 0.8
+            output_tokens = tokens * 0.2
+
+            if "haiku" in model.lower():
+                haiku_calls += 1
+                haiku_input += input_tokens
+                haiku_output += output_tokens
+                cost = (input_tokens * 0.00025 / 1000.0) + (output_tokens * 0.00125 / 1000.0)
+                haiku_cost += cost
+                total_cost_usd += cost
+            else:
+                sonnet_calls += 1
+                sonnet_input += input_tokens
+                sonnet_output += output_tokens
+                cost = (input_tokens * 0.003 / 1000.0) + (output_tokens * 0.015 / 1000.0)
+                sonnet_cost += cost
+                total_cost_usd += cost
+
+        # Savings if all had used Sonnet:
+        cost_if_all_sonnet = ((haiku_input + sonnet_input) * 0.003 / 1000.0) + (
+            (haiku_output + sonnet_output) * 0.015 / 1000.0
+        )
+        savings = cost_if_all_sonnet - total_cost_usd
+
+        return {
+            "total_cost_usd": round(total_cost_usd, 6),
+            "total_tokens": total_tokens,
+            "incidents_counted": len(rows),
+            "model_breakdown": {
+                "haiku": {
+                    "calls": haiku_calls,
+                    "input_tokens": int(haiku_input),
+                    "output_tokens": int(haiku_output),
+                    "cost_usd": round(haiku_cost, 6),
+                },
+                "sonnet": {
+                    "calls": sonnet_calls,
+                    "input_tokens": int(sonnet_input),
+                    "output_tokens": int(sonnet_output),
+                    "cost_usd": round(sonnet_cost, 6),
+                },
+            },
+            "savings_vs_all_sonnet_usd": round(max(0.0, savings), 6),
+        }
+
+    def get_resolution_analytics(self) -> dict[str, Any]:
+        """
+        Group incidents by calendar day for the last 7 days.
+        """
+        import datetime
+
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT requires_human_approval, created_at FROM incidents"
+                ).fetchall()
+
+        # Generate last 7 days (oldest first)
+        today = datetime.date.today()
+        dates_list = [today - datetime.timedelta(days=i) for i in range(6, -1, -1)]
+
+        daily_map = {d: {"total": 0, "auto": 0, "human": 0} for d in dates_list}
+
+        for row in rows:
+            created_time = row["created_at"]
+            try:
+                inc_date = datetime.datetime.fromtimestamp(created_time).date()
+                if inc_date in daily_map:
+                    daily_map[inc_date]["total"] += 1
+                    if row["requires_human_approval"]:
+                        daily_map[inc_date]["human"] += 1
+                    else:
+                        daily_map[inc_date]["auto"] += 1
+            except Exception:
+                continue
+
+        daily_results = []
+        total_autonomous = 0
+        total_incidents = 0
+        days_with_data = 0
+
+        for d in dates_list:
+            stats = daily_map[d]
+            rate = (stats["auto"] / stats["total"] * 100.0) if stats["total"] > 0 else 0.0
+            day_label = d.strftime("%a")
+
+            daily_results.append(
+                {
+                    "date": day_label,
+                    "total_incidents": stats["total"],
+                    "autonomous": stats["auto"],
+                    "human_approved": stats["human"],
+                    "rate_pct": round(rate, 1),
+                }
+            )
+
+            total_autonomous += stats["auto"]
+            total_incidents += stats["total"]
+            if stats["total"] > 0:
+                days_with_data += 1
+
+        overall_rate = (total_autonomous / total_incidents * 100.0) if total_incidents > 0 else 0.0
+
+        return {
+            "daily": daily_results,
+            "overall_rate_pct": round(overall_rate, 1),
+            "target_pct": 70,
+            "days_with_data": days_with_data,
+        }

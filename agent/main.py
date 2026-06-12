@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import structlog
+from agents.llm import get_llm_model_name
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -143,6 +144,7 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
         "execute_remediation": execute_remediation,
         "remediation_result": None,
         "similar_incidents": [],
+        "complexity_score": 0.5,
     }
 
     try:
@@ -157,6 +159,8 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
         reasoning = final_state.get("reasoning") or "No detailed reasoning provided."
         tokens_used = int(final_state.get("tokens_used") or 0)
         remediation_result = final_state.get("remediation_result")
+        complexity_score = float(final_state.get("complexity_score", 0.5))
+        model_used = get_llm_model_name(complexity_score)
 
         # Save reasoning trace timeline
         trace_timeline = [
@@ -229,6 +233,7 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
             resolved_at=t_end,
             mttr_seconds=mttr_seconds,
             metric_snapshot=dict(alert.metric_snapshot),
+            model_used=model_used,
         )
 
         # Store the resolved incident in RAG memory
@@ -256,6 +261,7 @@ async def investigate(alert: Alert, execute_remediation: bool = False):
                 "created_at": int(float(alert.timestamp)),
                 "status": "resolved",
                 "trace": trace_timeline,
+                "model_used": model_used,
             }
         )
 
@@ -309,6 +315,16 @@ async def prometheus_metrics():
 @app.get("/incidents", response_model=list[dict[str, Any]])
 async def list_incidents(limit: int = 100):
     return incident_store.list_incidents(limit=limit)
+
+
+@app.get("/incidents/{incident_id}", response_model=dict[str, Any])
+async def get_incident(incident_id: str):
+    """Returns the full details of a single incident, including its trace and metric snapshot."""
+    logger.info("Requesting incident detail", incident_id=incident_id)
+    inc = incident_store.get_incident(incident_id)
+    if inc is None:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
+    return inc
 
 
 @app.get("/incidents/{incident_id}/trace", response_model=list[dict[str, Any]])
@@ -371,10 +387,9 @@ async def get_similar_incidents(incident_id: str, top_k: int = 3):
 @app.get("/analytics/mttr")
 async def analytics_mttr():
     """
-    Returns p50, p95, p99 MTTR statistics across all resolved incidents.
-    Includes per-service breakdown and autonomous resolution rate.
+    Returns live benchmark MTTR metrics grouped by scenario, with speedup comparison.
     """
-    return incident_store.get_mttr_stats()
+    return incident_store.get_mttr_analytics()
 
 
 @app.get("/analytics/sla")
@@ -389,10 +404,17 @@ async def analytics_sla(threshold_seconds: float = 300.0):
 @app.get("/analytics/cost")
 async def analytics_cost():
     """
-    Returns cumulative and per-incident LLM token usage and estimated $ costs.
-    Based on Claude Sonnet pricing: $15.00 per million tokens.
+    Returns detailed LLM billing analysis including routing breakdowns and Sonnet savings.
     """
-    return incident_store.get_cost_stats()
+    return incident_store.get_cost_analytics()
+
+
+@app.get("/analytics/resolution")
+async def analytics_resolution():
+    """
+    Returns autonomous resolution percentages over the last 7 calendar days.
+    """
+    return incident_store.get_resolution_analytics()
 
 
 # ── Server-Sent Events ─────────────────────────────────────────────────────────

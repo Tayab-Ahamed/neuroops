@@ -57,7 +57,8 @@ class TrendForecaster:
             )
 
             # Perform degree 1 polyfit
-            slope, intercept = np.polyfit(x, y, 1)
+            with np.errstate(all="ignore"):
+                slope, intercept = np.polyfit(x, y, 1)
 
             # Extrapolate horizon_steps forward (1 step = 15s)
             latest_x = x[-1]

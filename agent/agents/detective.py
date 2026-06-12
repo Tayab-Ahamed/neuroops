@@ -17,9 +17,10 @@ class DetectiveOutput(BaseModel):
 async def detective_node(state: AgentState) -> dict:
     alert = state["alert"]
 
+    complexity_score = state.get("complexity_score", 0.5)
     from agents.llm import get_llm
 
-    llm = get_llm()
+    llm = get_llm(complexity_score=complexity_score)
     if llm is None:
         return {
             "detective_findings": {

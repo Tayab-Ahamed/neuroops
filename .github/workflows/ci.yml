@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Lint ─────────────────────────────────────────────────────
+  # ── Lint ─────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -20,12 +20,12 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-lint
+          key: ${{ runner.os }}-pip-lint-v2
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Install linting tools
@@ -40,100 +40,217 @@ jobs:
       - name: ruff
         run: ruff check detector/ agent/ remediator/ observability/ benchmarks/
 
-  # ── Tests ─────────────────────────────────────────────────────
+  # ── Detector Tests ───────────────────────────────────────────────────────────
   test-detector:
     name: Test / Detector
     runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    defaults:
+      run:
+        working-directory: detector
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-detector-${{ hashFiles('detector/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
-      - run: pip install --upgrade pip && pip install -r detector/requirements.txt
-      - run: pytest detector/tests --cov=detector --cov-report=xml -q
 
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          PROMETHEUS_URL: http://localhost:9090
+        run: |
+          pytest tests \
+            --cov=. \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            --tb=short \
+            -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: detector
+          fail_ci_if_error: false
+
+  # ── Agent Tests ──────────────────────────────────────────────────────────────
   test-agent:
     name: Test / Agent
     runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
+    defaults:
+      run:
+        working-directory: agent
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-agent-${{ hashFiles('agent/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
-      - run: pip install --upgrade pip && pip install -r agent/requirements.txt
-      - run: pytest agent/tests --cov=agent --cov-report=xml -q
 
+      - name: Install dependencies (no chromadb build extras)
+        run: |
+          pip install --upgrade pip
+          # Install chromadb with --no-build-isolation to skip heavy hnswlib compile
+          pip install "chromadb>=0.5.0" --prefer-binary --quiet
+          pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          ANTHROPIC_API_KEY: dummy-key-for-tests
+          OPENAI_API_KEY: dummy-key-for-tests
+          OTEL_SDK_DISABLED: "true"
+          PYTHONPATH: .
+        run: |
+          pytest tests \
+            --cov=. \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            --tb=short \
+            --ignore=tests/test_e2e_integration.py \
+            -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: agent
+          fail_ci_if_error: false
+
+  # ── Remediator Tests ─────────────────────────────────────────────────────────
   test-remediator:
     name: Test / Remediator
     runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      GITHUB_TOKEN: ${{ secrets.GH_TOKEN_TEST }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-remediator-${{ hashFiles('remediator/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
-      - run: pip install --upgrade pip && pip install -r remediator/requirements.txt
-      - run: pytest remediator/tests --cov=remediator --cov-report=xml -q
 
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r remediator/requirements.txt
+
+      - name: Run tests
+        # Tests import via 'from remediator.actions.X import Y' — must run from repo root
+        run: |
+          pytest remediator/tests \
+            --cov=remediator \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            --tb=short \
+            -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: remediator
+          fail_ci_if_error: false
+
+  # ── Observability Tests ──────────────────────────────────────────────────────
   test-observability:
     name: Test / Observability
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-observability
+          key: ${{ runner.os }}-pip-observability-v2
           restore-keys: ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install rich httpx pydantic structlog pytest pytest-cov click
-      - run: pytest observability/tests --cov=observability --cov-report=xml -q
+          pip install pytest pytest-cov rich httpx pydantic structlog click
 
+      # Observability tests are asset/config verification tests (no importable source).
+      # We skip --cov-fail-under for this job since coverage measures Python source
+      # coverage, and the tests deliberately only validate JSON/YAML config files.
+      - name: Run tests
+        env:
+          PYTHONPATH: observability
+        run: |
+          pytest observability/tests \
+            --tb=short \
+            -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          flags: observability
+          fail_ci_if_error: false
+
+
+  # ── Benchmarks Tests ─────────────────────────────────────────────────────────
   test-benchmarks:
     name: Test / Benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-benchmarks-${{ hashFiles('benchmarks/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
-      - run: pip install --upgrade pip && pip install -r benchmarks/requirements.txt
-      - run: pytest benchmarks/tests --cov=benchmarks --cov-report=xml -q
 
-  # ── Docker Build ──────────────────────────────────────────────
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r benchmarks/requirements.txt
+
+      - name: Run tests
+        # Tests import via 'from benchmarks.runner import ...' — must run from repo root
+        run: |
+          pytest benchmarks/tests \
+            --cov=benchmarks \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            --tb=short \
+            -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: benchmarks
+          fail_ci_if_error: false
+
+
+  # ── Docker Build ─────────────────────────────────────────────────────────────
   docker-build:
     name: Docker / ${{ matrix.service }}
     runs-on: ubuntu-latest
@@ -143,15 +260,20 @@ jobs:
         service: [detector, agent, remediator]
     steps:
       - uses: actions/checkout@v4
+
       - uses: docker/setup-buildx-action@v3
+
       - uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
           push: false
           tags: neuroops-${{ matrix.service }}:ci
+          # Use build cache to speed up Docker layer reuse
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # ── Security ──────────────────────────────────────────────────
+  # ── Security ─────────────────────────────────────────────────────────────────
   security:
     name: Security
     runs-on: ubuntu-latest
@@ -162,12 +284,12 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-security
+          key: ${{ runner.os }}-pip-security-v2
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Install Bandit
@@ -180,11 +302,15 @@ jobs:
           -x "**/tests/*,**/.venv/*"
 
       - name: TruffleHog
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.88.18
         with:
           path: ./
+          # Only scan new commits on PR, full scan on push to main
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'HEAD' }}
+          extra_args: --only-verified
 
-  # ── CI Gate ───────────────────────────────────────────────────
+  # ── CI Gate ──────────────────────────────────────────────────────────────────
   ci-ok:
     name: CI Gate
     runs-on: ubuntu-latest

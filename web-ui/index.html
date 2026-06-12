@@ -250,76 +250,33 @@
         <div class="text-dim font-code" style="font-size:11px;" id="ana-breach-rate">—</div>
       </div>
     </div>
-
-    <!-- Body: Donut + Breakdown + Chart -->
-    <div class="analytics-body">
-      <!-- Autonomous Donut -->
-      <div class="donut-card">
-        <div class="donut-card-title">Autonomous Resolution</div>
-        <div class="donut-wrap">
-          <svg class="donut-svg" width="140" height="140" viewBox="0 0 140 140">
-            <circle class="donut-bg" cx="70" cy="70" r="36" />
-            <circle class="donut-fill" id="donut-fill" cx="70" cy="70" r="36" />
-          </svg>
-          <div class="donut-center">
-            <div class="donut-pct" id="donut-pct">—%</div>
-            <div class="donut-sub">Auto</div>
-          </div>
-        </div>
-        <div class="cost-table">
-          <div class="cost-row">
-            <span class="cost-row-label">p50</span>
-            <span class="cost-row-val" id="mttr-p50">—</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-row-label">p95</span>
-            <span class="cost-row-val" id="mttr-p95">—</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-row-label">p99</span>
-            <span class="cost-row-val" id="mttr-p99">—</span>
-          </div>
-        </div>
+    <div class="analytics-grid-four">
+      <!-- SECTION 1 — MTTR COMPARISON -->
+      <div class="glass-panel" id="section-mttr-comparison">
+        <div class="glass-panel-title">MTTR COMPARISON</div>
+        <div id="mttr-comparison-content" style="margin-top: 12px; min-height: 220px; display: flex; flex-direction: column; justify-content: center;"></div>
       </div>
 
-      <!-- DORA tier + cost -->
-      <div class="dora-tier-card">
-        <div class="glass-panel-title">DORA Performance Tier</div>
-        <div class="dora-tier-value" id="dora-tier">—</div>
-        <div class="text-dim" style="font-size:11px; line-height:1.7;">
-          Elite: &lt;1hr · High: &lt;1day<br>Medium: &lt;1wk · Low: &gt;1wk
-        </div>
-        <div class="cost-table" style="margin-top:12px;">
-          <div class="cost-row">
-            <span class="cost-row-label">Total Tokens</span>
-            <span class="cost-row-val" id="ana-tokens">—</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-row-label">Total Cost</span>
-            <span class="cost-row-val green" id="ana-cost">$0.00</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-row-label">Manual Equiv.</span>
-            <span class="cost-row-val red" id="ana-manual">—</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-row-label">Savings</span>
-            <span class="cost-row-val green" id="ana-savings">—</span>
-          </div>
-        </div>
+      <!-- SECTION 2 — COST ANALYTICS -->
+      <div class="glass-panel" id="section-cost-analytics">
+        <div class="glass-panel-title">COST ANALYTICS</div>
+        <div id="cost-analytics-content" style="margin-top: 12px; min-height: 220px; display: flex; flex-direction: column; justify-content: center; gap: 16px;"></div>
       </div>
 
-      <!-- MTTR Chart + Per-Service -->
-      <div class="chart-card">
-        <div class="glass-panel-title">MTTR Trend</div>
-        <canvas id="trend-canvas"></canvas>
-        <div class="glass-panel-title" style="margin-top:12px;">Per-Service Breakdown</div>
-        <div class="service-breakdown" id="service-breakdown">
-          <div class="text-dim font-code" style="font-size:11px;">Waiting for data...</div>
-        </div>
+      <!-- SECTION 3 — AUTONOMOUS RATE TREND -->
+      <div class="glass-panel" id="section-resolution-trend">
+        <div class="glass-panel-title">AUTONOMOUS RESOLUTION TREND</div>
+        <div id="resolution-trend-content" style="margin-top: 12px; min-height: 220px; display: flex; flex-direction: column; justify-content: center;"></div>
+      </div>
+
+      <!-- SECTION 4 — BENCHMARK HISTORY -->
+      <div class="glass-panel" id="section-benchmark-history">
+        <div class="glass-panel-title">BENCHMARK HISTORY</div>
+        <div id="benchmark-history-content" style="margin-top: 12px; min-height: 220px; display: flex; flex-direction: column; justify-content: center;"></div>
       </div>
     </div>
   </div>
+
 
   <!-- ════════════════════════════════════════════════════════
        PAGE: POST-MORTEMS
@@ -348,7 +305,6 @@
        (Incident deep-dive — full page takeover)
        ════════════════════════════════════════════════════════ -->
   <div id="page-autopsy" class="page hidden">
-
     <!-- Header pill -->
     <div class="autopsy-header">
       <button class="autopsy-back" onclick="navigate('command', document.getElementById('tab-command'))" title="Back to Hub">←</button>
@@ -361,79 +317,121 @@
       <span class="autopsy-mttr" id="aut-mttr">MTTR: —</span>
     </div>
 
-    <!-- Synaptic Chain -->
-    <div class="synaptic-chain-wrap">
-      <div class="synaptic-chain-title">
-        Multi-Agent Neural Reasoning Chain
-      </div>
-      <div class="synaptic-chain" id="synaptic-chain">
-        <!-- Injected by JS -->
-      </div>
-    </div>
-
-    <!-- Bottom split -->
-    <div class="autopsy-bottom">
-
-      <!-- Root cause hypothesis -->
-      <div class="hypothesis-panel">
-        <div class="hypothesis-title">Root Cause Hypothesis</div>
-        <div class="hypothesis-text" id="aut-hypothesis">Awaiting neural analysis...</div>
-
-        <!-- Step-by-step trace (collapsed) -->
-        <div>
-          <div class="glass-panel-title" style="margin-bottom:12px; cursor:pointer;" onclick="toggleTrace()" id="trace-toggle-btn">
-            Step-by-Step Trace ▾
-          </div>
-          <div id="trace-list" class="trace-list"></div>
+    <!-- 3-Column Layout Grid -->
+    <div class="autopsy-grid">
+      <!-- LEFT COLUMN: Metric Charts & Timeline -->
+      <div class="autopsy-col left-col">
+        <div class="col-section-title">GOLDEN SIGNAL METRICS</div>
+        
+        <div class="chart-container">
+          <div class="chart-label">P99 LATENCY</div>
+          <svg class="metric-chart" id="chart-latency" width="100%" height="90" viewBox="0 0 300 90"></svg>
         </div>
 
-        <!-- Confidence dial -->
-        <div class="conf-dial-row">
-          <div class="conf-dial">
-            <svg class="conf-dial-svg" width="80" height="80" viewBox="0 0 80 80">
-              <circle class="conf-dial-bg" cx="40" cy="40" r="32" />
-              <circle class="conf-dial-fill" id="conf-dial-fill" cx="40" cy="40" r="32" />
-            </svg>
-            <div class="conf-dial-center">
-              <div class="conf-dial-pct" id="conf-pct">—%</div>
-              <div class="conf-dial-sub">Conf</div>
+        <div class="chart-container">
+          <div class="chart-label">ERROR RATE</div>
+          <svg class="metric-chart" id="chart-error" width="100%" height="90" viewBox="0 0 300 90"></svg>
+        </div>
+
+        <div class="chart-container">
+          <div class="chart-label">CPU USAGE</div>
+          <svg class="metric-chart" id="chart-cpu" width="100%" height="90" viewBox="0 0 300 90"></svg>
+        </div>
+
+        <div class="chart-container">
+          <div class="chart-label">MEMORY USAGE</div>
+          <svg class="metric-chart" id="chart-memory" width="100%" height="90" viewBox="0 0 300 90"></svg>
+        </div>
+
+        <!-- Horizontal Timeline Bar -->
+        <div class="timeline-bar-wrap">
+          <div class="timeline-label">INCIDENT LIFECYCLE TIMELINE</div>
+          <div class="timeline-bar" id="timeline-bar"></div>
+        </div>
+      </div>
+
+      <!-- CENTER COLUMN: Agent Reasoning Chain -->
+      <div class="autopsy-col center-col">
+        <div class="col-section-title">AGENT REASONING CHAIN</div>
+        
+        <!-- SVG Node Graph -->
+        <div class="node-graph-wrap">
+          <svg class="node-graph-svg" id="node-graph-svg" viewBox="0 0 400 240"></svg>
+          <div class="node-html-overlay" id="node-html-overlay"></div>
+        </div>
+
+        <!-- HYPOTHESIS Card -->
+        <div class="hypothesis-card-new" id="hypothesis-card-new">
+          <div class="hypothesis-title">ROOT CAUSE HYPOTHESIS</div>
+          <div class="hypothesis-body-text" id="aut-hypothesis-new">Awaiting neural analysis...</div>
+          
+          <!-- Confidence Arc Gauge -->
+          <div class="conf-gauge-row">
+            <div class="conf-arc-gauge">
+              <svg class="conf-arc-svg" width="100" height="55" viewBox="0 0 100 55">
+                <path class="conf-arc-bg" d="M 10 50 A 40 40 0 0 1 90 50" />
+                <path class="conf-arc-fill" id="conf-arc-fill" d="M 10 50 A 40 40 0 0 1 90 50" />
+              </svg>
+              <div class="conf-arc-center">
+                <span class="conf-arc-pct" id="conf-pct-new">—%</span>
+                <span class="conf-arc-lbl">CONFIDENCE</span>
+              </div>
+            </div>
+            <div class="action-chip-wrap" id="action-chip-wrap"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: Remediation Log -->
+      <div class="autopsy-col right-col">
+        <div class="col-section-title">REMEDIATION LOG</div>
+        <div class="remediation-log-card">
+          <div class="log-row">
+            <span class="log-label">ACTION TAKEN</span>
+            <span class="action-chip-mono" id="log-action">—</span>
+          </div>
+
+          <!-- Pod state before / after -->
+          <div class="pod-states-row">
+            <div class="pod-state-card before">
+              <div class="state-title">BEFORE REMEDIATION</div>
+              <div class="pod-status-badge danger" id="pod-status-before">CRASHING</div>
+            </div>
+            <div class="pod-state-card after">
+              <div class="state-title">AFTER REMEDIATION</div>
+              <div class="pod-status-badge success" id="pod-status-after">RUNNING</div>
             </div>
           </div>
-          <div class="conf-info">
-            <div class="conf-info-label">AI Confidence</div>
-            <div class="conf-info-value" id="conf-info-text">Calculating neural consensus...</div>
+
+          <div class="log-row dim-text font-code" style="margin-top:12px;font-size:11px;">
+            <span id="log-timestamp">—</span>
+            <span id="log-duration" style="margin-left:auto;">—</span>
+          </div>
+
+          <div class="log-row" id="pr-chip-row" style="margin-top:12px; display:none;"></div>
+
+          <div class="mttr-dora-box">
+            <div class="mttr-block">
+              <span class="mttr-lbl">TOTAL MTTR</span>
+              <span class="mttr-big-green" id="log-mttr-val">—</span>
+            </div>
+            <div class="dora-block">
+              <span class="dora-lbl">PERFORMANCE TIER</span>
+              <span class="dora-badge-new" id="log-dora-tier">—</span>
+            </div>
+          </div>
+
+          <!-- Replay Button / Snippet -->
+          <div class="replay-action-wrap" style="margin-top: 24px;">
+            <button class="replay-btn" id="replay-trace-btn">REPLAY TRACE</button>
+            <div class="replay-snippet" id="replay-snippet" style="display:none;">
+              <code>CLI only: python replay.py --incident-id <span id="replay-inc-id-val">—</span></code>
+            </div>
           </div>
         </div>
       </div>
-
-      <!-- Remediation Console -->
-      <div class="remediation-panel">
-        <div class="console-title">Remediation Console</div>
-        <div class="console-body" id="console-body">
-          <div class="console-line">
-            <span class="console-prompt">$</span>
-            <span class="console-cmd" id="console-cmd">Loading action...</span>
-          </div>
-          <div class="console-line">
-            <span class="console-out" id="console-out1"></span>
-          </div>
-          <div class="console-line">
-            <span class="console-out" id="console-out2"></span>
-          </div>
-          <div class="console-line" id="console-cursor-line" style="display:none;">
-            <span class="console-prompt">$</span>
-            <span class="console-cursor"></span>
-          </div>
-        </div>
-        <div class="console-actions" id="console-actions">
-          <button class="console-btn approve" id="aut-approve-btn" onclick="approveAction()">✓ Approve Remediation</button>
-          <button class="console-btn reject" id="aut-reject-btn" onclick="rejectAction()">✕ Reject Action</button>
-          <button class="console-btn close-only" onclick="navigate('command', document.getElementById('tab-command'))">← Back to Hub</button>
-        </div>
-      </div>
-
-    </div><!-- /autopsy-bottom -->
-  </div><!-- /page-autopsy -->
+    </div>
+  </div>
 
 </div><!-- /app -->
 

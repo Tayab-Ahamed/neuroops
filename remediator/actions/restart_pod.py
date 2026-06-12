@@ -1,14 +1,23 @@
 import time
 
 from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 
-from remediator.actions import ActionResult, k8s_configured, logger
+from remediator.actions import (
+    ActionResult,
+    get_action_timeout_seconds,
+    is_not_found,
+    k8s_configured,
+    logger,
+    skipped_not_found,
+    timeout_result,
+)
 
 
 def restart_pod(namespace: str, pod_name: str) -> ActionResult:
     """
     Deletes the target pod (allowing K8s controller to recreate it)
-    and waits up to 60 seconds for the new pod to be Ready.
+    and waits for the new pod to be Ready.
     """
     logger.info("Starting restart_pod action", namespace=namespace, pod_name=pod_name)
     start_time = time.time()
@@ -29,28 +38,83 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
     try:
         v1 = client.CoreV1Api()
 
-        # 1. Read pod to get labels for recreating tracking
+        # 1. Read pod to verify existence and get labels for recreation tracking.
         try:
             pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
             labels = pod.metadata.labels or {}
             label_selector = ",".join([f"{k}={v}" for k, v in labels.items()])
             logger.info("Retrieved pod labels for tracking", pod_name=pod_name, labels=labels)
-        except Exception as e:
-            logger.warning(
-                "Could not read pod metadata before delete, using default labels",
+        except ApiException as exc:
+            if is_not_found(exc):
+                logger.warning(
+                    "Pod restart skipped because target pod was not found",
+                    namespace=namespace,
+                    pod_name=pod_name,
+                    status=exc.status,
+                )
+                return skipped_not_found(start_time)
+            duration = time.time() - start_time
+            logger.error(
+                "Failed to read pod before restart",
+                namespace=namespace,
                 pod_name=pod_name,
-                error=str(e),
+                status=exc.status,
+                reason=exc.reason,
             )
-            # Fallback label selector based on common name formats
+            return ActionResult(
+                success=False,
+                action_taken=(
+                    f"Failed to restart pod '{pod_name}' in namespace '{namespace}': "
+                    f"{exc.reason}"
+                ),
+                duration_seconds=duration,
+            )
+
+        if not label_selector:
             app_name = pod_name.split("-")[0]
             label_selector = f"app={app_name}"
 
-        # 2. Delete the pod
-        logger.info("Deleting namespaced pod", namespace=namespace, pod_name=pod_name)
-        v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+        terminating = pod.metadata.deletion_timestamp is not None
 
-        # 3. Wait up to 60 seconds for the pod to be recreated and Ready
-        timeout = 60
+        # 2. Delete the pod unless Kubernetes is already terminating it.
+        if terminating:
+            logger.info(
+                "Pod already terminating; waiting for replacement readiness",
+                namespace=namespace,
+                pod_name=pod_name,
+            )
+        else:
+            logger.info("Deleting namespaced pod", namespace=namespace, pod_name=pod_name)
+            try:
+                v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+            except ApiException as exc:
+                if is_not_found(exc):
+                    logger.warning(
+                        "Pod disappeared before delete; waiting for replacement readiness",
+                        namespace=namespace,
+                        pod_name=pod_name,
+                        status=exc.status,
+                    )
+                else:
+                    duration = time.time() - start_time
+                    logger.error(
+                        "Failed deleting pod",
+                        namespace=namespace,
+                        pod_name=pod_name,
+                        status=exc.status,
+                        reason=exc.reason,
+                    )
+                    return ActionResult(
+                        success=False,
+                        action_taken=(
+                            f"Failed to restart pod '{pod_name}' in namespace "
+                            f"'{namespace}': {exc.reason}"
+                        ),
+                        duration_seconds=duration,
+                    )
+
+        # 3. Wait for the pod to be recreated and Ready.
+        timeout = get_action_timeout_seconds()
         recreated_and_ready = False
 
         while time.time() - start_time < timeout:
@@ -89,8 +153,14 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                 if all_ready and (found_new or len(pods_list.items) > 0):
                     recreated_and_ready = True
                     break
-            except Exception as e:
-                logger.warning("Error listing pods during recreation check", error=str(e))
+            except ApiException as exc:
+                logger.warning(
+                    "Error listing pods during recreation check",
+                    namespace=namespace,
+                    pod_name=pod_name,
+                    status=exc.status,
+                    reason=exc.reason,
+                )
 
         duration = time.time() - start_time
         if recreated_and_ready:
@@ -102,17 +172,21 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
             )
         else:
             logger.error("Pod restart verification timed out", pod_name=pod_name, duration=duration)
-            return ActionResult(
-                success=False,
-                action_taken=f"Restarted pod '{pod_name}' in namespace '{namespace}' but verification timed out (60s).",
-                duration_seconds=duration,
-            )
+            return timeout_result(start_time)
 
-    except Exception as e:
+    except ApiException as exc:
         duration = time.time() - start_time
-        logger.error("Failed to execute restart_pod", pod_name=pod_name, error=str(e))
+        logger.error(
+            "Failed to execute restart_pod",
+            namespace=namespace,
+            pod_name=pod_name,
+            status=exc.status,
+            reason=exc.reason,
+        )
         return ActionResult(
             success=False,
-            action_taken=f"Failed to restart pod '{pod_name}' in namespace '{namespace}': {str(e)}",
+            action_taken=(
+                f"Failed to restart pod '{pod_name}' in namespace '{namespace}': {exc.reason}"
+            ),
             duration_seconds=duration,
         )

@@ -19,7 +19,7 @@ def input_with_timeout(prompt: str, timeout: int = 300) -> str:
     Supports Windows natively via msvcrt, and fallback to select/sys.stdin on Unix.
     """
     if not sys.stdin.isatty():
-        logger.info("Non-interactive TTY environment detected, bypassing human input")
+        logger.warning("Non-interactive mode — human approval unavailable, defaulting to reject")
         return "n"
 
     try:
@@ -55,7 +55,7 @@ def input_with_timeout(prompt: str, timeout: int = 300) -> str:
         else:
             sys.stdout.write("\n")
             sys.stdout.flush()
-            logger.info("Windows CLI approval prompt timed out")
+            logger.warning("Human approval timeout — defaulting to reject for safety.")
             return "n"
 
         return "".join(chars).strip()
@@ -72,7 +72,7 @@ def input_with_timeout(prompt: str, timeout: int = 300) -> str:
         else:
             sys.stdout.write("\n")
             sys.stdout.flush()
-            logger.info("Unix CLI approval prompt timed out")
+            logger.warning("Human approval timeout — defaulting to reject for safety.")
             return "n"
 
 
@@ -87,6 +87,10 @@ def prompt_human(hypothesis: dict[str, Any] | Any, action: str) -> bool:
     if test_approval is not None:
         logger.info("Test approval override detected", value=test_approval)
         return test_approval.lower() == "true"
+
+    if not sys.stdin.isatty():
+        logger.warning("Non-interactive mode — human approval unavailable, defaulting to reject")
+        return False
 
     # Extract fields from dict or Pydantic model safely
     def get_val(obj, key, default=""):

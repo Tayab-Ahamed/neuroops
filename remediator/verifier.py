@@ -43,6 +43,7 @@ def verify_resolution(alert: dict[str, Any] | Any, timeout_seconds: int = 120) -
     )
 
     start_time = time.time()
+    consecutive_clean_polls = 0
     while time.time() - start_time < timeout_seconds:
         try:
             # Poll detector `/alerts` endpoint
@@ -60,25 +61,59 @@ def verify_resolution(alert: dict[str, Any] | Any, timeout_seconds: int = 120) -
                             active_ids.append(getattr(act, "id", None))
 
                     if alert_id not in active_ids:
+                        consecutive_clean_polls += 1
                         logger.info(
-                            "verifier: Alert successfully cleared and resolved!",
+                            "verifier: Alert absent during clean poll",
                             alert_id=alert_id,
                             service=service,
+                            consecutive_clean_polls=consecutive_clean_polls,
                         )
-                        return True
+                        if consecutive_clean_polls >= 2:
+                            logger.info(
+                                "verifier: Alert successfully cleared and resolved!",
+                                alert_id=alert_id,
+                                service=service,
+                            )
+                            return True
                     else:
+                        consecutive_clean_polls = 0
                         logger.info(
                             "verifier: Alert is still active, waiting for resolution...",
                             alert_id=alert_id,
                         )
+                elif response.status_code == 500:
+                    consecutive_clean_polls = 0
+                    logger.warning(
+                        "verifier: Detector returned 500; resolution status unknown",
+                        status_code=response.status_code,
+                        alert_id=alert_id,
+                        service=service,
+                    )
                 else:
+                    consecutive_clean_polls = 0
                     logger.warning(
                         "verifier: Detector returned non-200 status",
                         status_code=response.status_code,
+                        alert_id=alert_id,
+                        service=service,
                     )
-        except Exception as e:
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
             logger.warning(
-                "verifier: Failed to fetch alerts from detector, will retry", error=str(e)
+                "verifier: Detector unreachable during verification, assuming unresolved",
+                detector=detector_url,
+                alert_id=alert_id,
+                service=service,
+                error=str(exc),
+            )
+            return False
+        except httpx.HTTPError as exc:
+            consecutive_clean_polls = 0
+            logger.warning(
+                "verifier: Failed to fetch alerts from detector, will retry",
+                detector=detector_url,
+                alert_id=alert_id,
+                service=service,
+                error=str(exc),
             )
 
         time.sleep(5)

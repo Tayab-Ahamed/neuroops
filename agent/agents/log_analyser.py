@@ -23,9 +23,10 @@ async def log_analyser_node(state: AgentState) -> dict:
     service = alert.service
 
     # Check for keys. If missing, return mock findings for local test execution
+    complexity_score = state.get("complexity_score", 0.5)
     from agents.llm import get_llm
 
-    llm = get_llm()
+    llm = get_llm(complexity_score=complexity_score)
     if llm is None:
         # Mock logs diagnosis matching the service
         if service == "backend":

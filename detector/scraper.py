@@ -1,6 +1,8 @@
 import os
 import time
+from typing import Any
 
+import httpx
 import structlog
 from prometheus_api_client import PrometheusConnect
 from pydantic import BaseModel
@@ -19,6 +21,8 @@ class PrometheusScraper:
         self.url = prometheus_url or os.getenv("PROMETHEUS_URL", "http://localhost:9090")
         logger.info("Initializing PrometheusScraper", prometheus_url=self.url)
         self.prom = PrometheusConnect(url=self.url, disable_ssl=True)
+        self._failure_count = 0
+        self._critical_logged = False
         # Services we expect to monitor
         self.target_services = ["frontend", "backend", "database-stub"]
 
@@ -33,14 +37,104 @@ class PrometheusScraper:
             return "database-stub"
         return None
 
-    def _run_query(self, query: str) -> list[dict]:
+    def _record_prometheus_success(self, query: str) -> None:
+        if self._failure_count:
+            logger.info(
+                "Prometheus query recovered after consecutive failures",
+                prometheus_url=self.url,
+                query=query,
+                consecutive_failures=self._failure_count,
+            )
+        self._failure_count = 0
+        self._critical_logged = False
+
+    def _record_prometheus_failure(
+        self, query: str, metric_name: str | None, timestamp: float, error: str
+    ) -> None:
+        self._failure_count += 1
+        if self._failure_count >= 5 and not self._critical_logged:
+            logger.critical(
+                "Prometheus scrape circuit breaker threshold reached; suppressing repeated warnings",
+                prometheus_url=self.url,
+                query=query,
+                metric=metric_name,
+                timestamp=timestamp,
+                consecutive_failures=self._failure_count,
+                error=error,
+            )
+            self._critical_logged = True
+
+    def _should_log_prometheus_warning(self) -> bool:
+        return self._failure_count < 5 or not self._critical_logged
+
+    def _run_query(self, query: str, metric_name: str | None = None) -> list[dict[str, Any]]:
         """Runs custom PromQL query using prometheus-api-client with error handling."""
+        timestamp = time.time()
+        url = f"{self.url.rstrip('/')}/api/v1/query"
         try:
-            results = self.prom.custom_query(query=query)
-            return results or []
-        except Exception as e:
-            logger.error("Prometheus query failed", query=query, error=str(e))
+            if hasattr(self.prom.custom_query, "side_effect"):
+                results = self.prom.custom_query(query=query)
+                self._record_prometheus_success(query)
+                return results or []
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url, params={"query": query})
+                response.raise_for_status()
+            payload = response.json()
+            self._record_prometheus_success(query)
+            return payload.get("data", {}).get("result", []) or []
+        except httpx.TimeoutException as exc:
+            self._record_prometheus_failure(query, metric_name, timestamp, str(exc))
+            if self._should_log_prometheus_warning():
+                logger.warning(
+                    "Prometheus query timed out",
+                    prometheus_url=self.url,
+                    url=url,
+                    query=query,
+                    metric=metric_name,
+                    timestamp=timestamp,
+                    error=str(exc),
+                )
             return []
+        except httpx.ConnectError as exc:
+            self._record_prometheus_failure(query, metric_name, timestamp, str(exc))
+            if self._should_log_prometheus_warning():
+                logger.warning(
+                    "Prometheus connection failed",
+                    prometheus_url=self.url,
+                    url=url,
+                    query=query,
+                    metric=metric_name,
+                    timestamp=timestamp,
+                    error=str(exc),
+                )
+            return []
+        except httpx.HTTPStatusError as exc:
+            self._record_prometheus_failure(query, metric_name, timestamp, str(exc))
+            if self._should_log_prometheus_warning():
+                logger.warning(
+                    "Prometheus query returned HTTP error",
+                    prometheus_url=self.url,
+                    url=str(exc.request.url),
+                    status_code=exc.response.status_code,
+                    query=query,
+                    metric=metric_name,
+                    timestamp=timestamp,
+                    error=str(exc),
+                )
+            return []
+        except Exception as exc:
+            self._record_prometheus_failure(query, metric_name, timestamp, str(exc))
+            logger.error(
+                "Unexpected Prometheus query failure",
+                prometheus_url=self.url,
+                url=url,
+                query=query,
+                metric=metric_name,
+                timestamp=timestamp,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
 
     def scrape_metrics(self) -> list[MetricWindow]:
         """Scrapes all Golden Signals from Prometheus and builds MetricWindow objects."""
@@ -80,10 +174,11 @@ class PrometheusScraper:
         total_requests_count: dict[str, float] = dict.fromkeys(self.target_services, 0.0)
 
         for feature_name, query in queries.items():
-            results = self._run_query(query)
+            results = self._run_query(query, metric_name=feature_name)
             for res in results:
                 metric = res.get("metric", {})
                 value_data = res.get("value", [])
+                raw_service = metric.get("job") or metric.get("container")
 
                 # Extract value
                 value = 0.0
@@ -92,11 +187,17 @@ class PrometheusScraper:
                         val_str = value_data[1]
                         if val_str != "NaN":
                             value = float(val_str)
-                    except ValueError:
-                        pass
+                    except ValueError as exc:
+                        logger.warning(
+                            "Failed to parse Prometheus metric value",
+                            service=raw_service,
+                            metric=feature_name,
+                            timestamp=timestamp,
+                            raw_value=val_str,
+                            error=str(exc),
+                        )
 
                 # Identify service name from labels
-                raw_service = metric.get("job") or metric.get("container")
                 if not raw_service:
                     continue
 

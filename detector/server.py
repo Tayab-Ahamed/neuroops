@@ -1,15 +1,19 @@
 import asyncio
 import os
+import threading
 from contextlib import asynccontextmanager
+from typing import Any
 
+import httpx
 import structlog
 from alerter import Alert, Alerter
 from baseline_collector import collect_historical_baseline
 from correlator import AlertCorrelator, CorrelatedAlert
-from fastapi import BackgroundTasks, FastAPI, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
 from models.forecaster import TrendForecaster
 from models.isolation_forest import IsolationForestModel
 from models.sequence_forecaster import SequenceForecastModel
+from pydantic import BaseModel
 from scraper import MetricWindow, PrometheusScraper
 
 # Prometheus metrics instrumentation
@@ -59,6 +63,7 @@ try:
 except ImportError:
     _prom_enabled = False
     _prom_registry = None
+    structlog.get_logger().warning("prometheus_client not installed; detector metrics disabled")
 
 # Configure standard console logging
 structlog.configure(
@@ -78,9 +83,14 @@ correlator = AlertCorrelator(
 
 # Active alert registry
 active_alerts: list[Alert] = []
+training_lock = threading.Lock()
+training_in_progress = False
 # Model file locations
 MODEL_PATH = os.getenv("MODEL_PATH", "checkpoints/isolation_forest.joblib")
-SEQ_MODEL_PATH = os.getenv("SEQ_MODEL_PATH", "checkpoints/lstm_model.pt")
+# NOTE: Despite the historical 'lstm_model.pt' filename, SequenceForecastModel
+# uses Ridge Regression via joblib (not PyTorch). New default is seq_model.joblib.
+# Set SEQ_MODEL_PATH env var to override (supports both .pt and .joblib files).
+SEQ_MODEL_PATH = os.getenv("SEQ_MODEL_PATH", "checkpoints/seq_model.joblib")
 model_loaded = False
 seq_model_loaded = False
 PREDICTIVE_ALERTS_ENABLED = os.getenv("PREDICTIVE_ALERTS_ENABLED", "true").lower() == "true"
@@ -89,6 +99,28 @@ forecaster = TrendForecaster()
 
 # service_history maps service_name -> list of MetricWindow
 service_history: dict[str, list[MetricWindow]] = {}
+
+
+class CorrelationStatsResponse(BaseModel):
+    total_buffered_alerts: int
+    correlated_groups: int
+    cascading_failure_groups: int
+    correlation_window_seconds: float
+    max_age_seconds: float
+
+
+class HealthResponse(BaseModel):
+    status: str
+    model_loaded: bool
+    seq_model_loaded: bool
+    active_alerts_count: int
+    correlation_stats: CorrelationStatsResponse
+
+
+class TrainBaselineResponse(BaseModel):
+    status: str
+    message: str
+
 
 # Try to load IsolationForest model at startup
 try:
@@ -101,7 +133,12 @@ try:
     else:
         logger.warn("No model checkpoint found at startup, running in Warmup Mode", path=MODEL_PATH)
 except Exception as e:
-    logger.error("Failed to load model checkpoint at startup", path=MODEL_PATH, error=str(e))
+    logger.error(
+        "Failed to load model checkpoint at startup",
+        path=MODEL_PATH,
+        error=str(e),
+        exc_info=True,
+    )
 
 # Try to load sequence forecaster model at startup
 try:
@@ -116,6 +153,80 @@ except Exception as e:
         "Failed to load sequence forecaster checkpoint at startup",
         path=SEQ_MODEL_PATH,
         error=str(e),
+        exc_info=True,
+    )
+
+
+def get_resolved_detector_config() -> dict[str, Any]:
+    """Returns resolved detector configuration values for startup validation/logging."""
+    return {
+        "PROMETHEUS_URL": os.getenv("PROMETHEUS_URL"),
+        "TARGET_NAMESPACE": os.getenv("TARGET_NAMESPACE", "neuroops-demo"),
+        "ANOMALY_CONTAMINATION": os.getenv("ANOMALY_CONTAMINATION", "0.05"),
+        "ALERT_DEDUP_WINDOW_SECONDS": os.getenv("ALERT_DEDUP_WINDOW_SECONDS", "300"),
+        "PREDICTIVE_ALERTS_ENABLED": os.getenv("PREDICTIVE_ALERTS_ENABLED", "true"),
+    }
+
+
+async def validate_startup_config() -> None:
+    """Validates required startup config and probes Prometheus health defensively."""
+    config = get_resolved_detector_config()
+    logger.info("Resolved detector startup configuration", **config)
+
+    if not config["PROMETHEUS_URL"]:
+        logger.error("Missing required detector environment variable", variable="PROMETHEUS_URL")
+        raise RuntimeError("Missing required environment variable: PROMETHEUS_URL")
+
+    health_url = f"{str(config['PROMETHEUS_URL']).rstrip('/')}/-/healthy"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(health_url)
+            response.raise_for_status()
+        logger.info(
+            "Prometheus startup health check succeeded",
+            prometheus_url=config["PROMETHEUS_URL"],
+        )
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "Prometheus startup health check timed out",
+            prometheus_url=config["PROMETHEUS_URL"],
+            url=health_url,
+            timeout_seconds=5.0,
+            error=str(exc),
+        )
+    except httpx.ConnectError as exc:
+        logger.warning(
+            "Prometheus startup health check connection failed",
+            prometheus_url=config["PROMETHEUS_URL"],
+            url=health_url,
+            timeout_seconds=5.0,
+            error=str(exc),
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Prometheus startup health check returned HTTP error",
+            prometheus_url=config["PROMETHEUS_URL"],
+            url=str(exc.request.url),
+            status_code=exc.response.status_code,
+            timeout_seconds=5.0,
+            error=str(exc),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Prometheus startup health check failed unexpectedly",
+            prometheus_url=config["PROMETHEUS_URL"],
+            url=health_url,
+            timeout_seconds=5.0,
+            error=str(exc),
+            exc_info=True,
+        )
+
+
+def internal_error(detail: str) -> HTTPException:
+    """Builds a structured HTTP 500 response without leaking raw exceptions."""
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"error": "internal_server_error", "message": detail},
     )
 
 
@@ -125,12 +236,16 @@ async def background_scraping_loop():
     logger.info("Starting background scraping loop task")
 
     while True:
+        current_service = None
+        current_timestamp = None
         try:
             # Scrape current metric window
             windows = scraper.scrape_metrics()
 
             for window in windows:
                 service = window.service_name
+                current_service = service
+                current_timestamp = window.timestamp
                 if service not in service_history:
                     service_history[service] = []
 
@@ -159,6 +274,7 @@ async def background_scraping_loop():
                     # Process window with alerter
                     alert = alerter.process_window(window, anomaly_score, is_anomaly)
                     if alert:
+                        alerter.ensure_unique_alert_id(alert, active_alerts)
                         # Downclass points that are transient (no temporal trend detected by LSTM)
                         if seq_model_loaded and not is_seq_anomaly:
                             alert.severity = "P3"
@@ -195,13 +311,20 @@ async def background_scraping_loop():
                 LSTM_LOADED_GAUGE.set(1 if seq_model_loaded else 0)
 
         except Exception as e:
-            logger.error("Error in background scraping loop", error=str(e))
+            logger.error(
+                "Error in background scraping loop",
+                service=current_service,
+                timestamp=current_timestamp,
+                error=str(e),
+                exc_info=True,
+            )
 
         await asyncio.sleep(15)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await validate_startup_config()
     # Startup: Spin up background loop task
     task = asyncio.create_task(background_scraping_loop())
     yield
@@ -210,71 +333,99 @@ async def lifespan(app: FastAPI):
     try:
         await task
     except asyncio.CancelledError:
-        pass
+        logger.info("Background scraping loop cancelled during detector shutdown")
 
 
 app = FastAPI(title="NeuroOps Anomaly Detection Service", lifespan=lifespan)
 
 
-@app.get("/alerts", response_model=list[Alert])
+@app.get("/alerts", response_model=list[Alert], status_code=status.HTTP_200_OK)
 async def get_alerts():
     """Returns the list of active/fired alerts."""
-    return active_alerts
+    try:
+        return active_alerts
+    except Exception as exc:
+        logger.error("Failed to return active alerts", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return active alerts")
 
 
-@app.get("/alerts/predictive", response_model=list[Alert])
+@app.get("/alerts/predictive", response_model=list[Alert], status_code=status.HTTP_200_OK)
 async def get_predictive_alerts():
     """Returns only predictive alerts (type='predictive')."""
-    return [a for a in active_alerts if getattr(a, "type", "reactive") == "predictive"]
+    try:
+        return [a for a in active_alerts if getattr(a, "type", "reactive") == "predictive"]
+    except Exception as exc:
+        logger.error("Failed to return predictive alerts", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return predictive alerts")
 
 
-@app.get("/alerts/correlated", response_model=list[CorrelatedAlert])
+@app.get("/alerts/correlated", response_model=list[CorrelatedAlert], status_code=status.HTTP_200_OK)
 async def get_correlated_alerts():
     """
     Returns alerts grouped into correlated groups by temporal proximity.
     Groups that affect multiple services are flagged as is_cascading_failure=True.
     This eliminates redundant RCA investigations for the same root cause.
     """
-    correlator.ingest(active_alerts)
-    return correlator.correlate()
+    try:
+        correlator.ingest(active_alerts)
+        return correlator.correlate()
+    except Exception as exc:
+        logger.error("Failed to return correlated alerts", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return correlated alerts")
 
 
-@app.get("/alerts/correlation-stats")
+@app.get(
+    "/alerts/correlation-stats",
+    response_model=CorrelationStatsResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def get_correlation_stats():
     """Returns diagnostic statistics about the alert correlator state."""
-    correlator.ingest(active_alerts)
-    return correlator.get_correlation_stats()
+    try:
+        correlator.ingest(active_alerts)
+        return correlator.get_correlation_stats()
+    except Exception as exc:
+        logger.error("Failed to return correlation stats", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return correlation stats")
 
 
-@app.get("/metrics")
+@app.get("/metrics", status_code=status.HTTP_200_OK)
 async def prometheus_metrics():
     """Exposes Prometheus-format metrics for scraping by Grafana / kube-prometheus."""
-    if not _prom_enabled:
+    try:
+        if not _prom_enabled:
+            return Response(
+                content="# prometheus_client not installed",
+                media_type="text/plain",
+            )
         return Response(
-            content="# prometheus_client not installed",
-            media_type="text/plain",
+            content=generate_latest(_prom_registry),
+            media_type=CONTENT_TYPE_LATEST,
         )
-    return Response(
-        content=generate_latest(_prom_registry),
-        media_type=CONTENT_TYPE_LATEST,
-    )
+    except Exception as exc:
+        logger.error("Failed to generate Prometheus metrics", error=str(exc), exc_info=True)
+        raise internal_error("Failed to generate Prometheus metrics")
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
 async def get_health():
     """Returns service health status and model availability."""
-    return {
-        "status": "ok",
-        "model_loaded": model_loaded,
-        "seq_model_loaded": seq_model_loaded,
-        "active_alerts_count": len(active_alerts),
-        "correlation_stats": correlator.get_correlation_stats(),
-    }
+    try:
+        return {
+            "status": "ok",
+            "model_loaded": model_loaded,
+            "seq_model_loaded": seq_model_loaded,
+            "active_alerts_count": len(active_alerts),
+            "correlation_stats": correlator.get_correlation_stats(),
+        }
+    except Exception as exc:
+        logger.error("Failed to return detector health", error=str(exc), exc_info=True)
+        raise internal_error("Failed to return detector health")
 
 
 def run_async_training(minutes: int):
     """Asynchronous background training process."""
-    global model_loaded, seq_model_loaded
+    global model_loaded, seq_model_loaded, training_in_progress
     try:
         logger.info("Asynchronous baseline training task started")
         # Query historical data from Prometheus instantly
@@ -296,6 +447,7 @@ def run_async_training(minutes: int):
         # Swap models globally
         model.models = new_model.models
         model.features = new_model.features
+        model._fitted = new_model._fitted
         model_loaded = True
 
         sequence_model.models = new_seq_model.models
@@ -304,18 +456,65 @@ def run_async_training(minutes: int):
         seq_model_loaded = True
 
         logger.info(
-            "Asynchronous IsolationForest and LSTM model training and reloading completed successfully!"
+            "Asynchronous IsolationForest and LSTM model training and reloading "
+            "completed successfully!"
         )
     except Exception as e:
-        logger.error("Failed in asynchronous model training process", error=str(e))
+        logger.error(
+            "Failed in asynchronous model training process",
+            duration_minutes=minutes,
+            error=str(e),
+            exc_info=True,
+        )
+    finally:
+        with training_lock:
+            training_in_progress = False
+        logger.info("Asynchronous baseline training task finished", duration_minutes=minutes)
 
 
-@app.post("/baseline/train")
+@app.post(
+    "/baseline/train",
+    response_model=TrainBaselineResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def train_baseline(background_tasks: BackgroundTasks, minutes: int = 30):
     """Triggers historical baseline query and IsolationForest training asynchronously."""
-    logger.info("Received request to trigger model baseline training", duration_minutes=minutes)
-    background_tasks.add_task(run_async_training, minutes)
-    return {
-        "status": "training_started",
-        "message": f"Historical data collection ({minutes}m) and training running in background.",
-    }
+    global training_in_progress
+    try:
+        with training_lock:
+            if training_in_progress:
+                logger.warning(
+                    "Rejected concurrent baseline training request",
+                    duration_minutes=minutes,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Training already in progress",
+                )
+            training_in_progress = True
+
+        logger.info("Received request to trigger model baseline training", duration_minutes=minutes)
+        background_tasks.add_task(run_async_training, minutes)
+        return {
+            "status": "training_started",
+            "message": (
+                f"Historical data collection ({minutes}m) and training running in background."
+            ),
+        }
+    except HTTPException:
+        logger.warning(
+            "Baseline training request returned HTTP exception",
+            duration_minutes=minutes,
+            training_in_progress=training_in_progress,
+        )
+        raise
+    except Exception as exc:
+        with training_lock:
+            training_in_progress = False
+        logger.error(
+            "Failed to start baseline training",
+            duration_minutes=minutes,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise internal_error("Failed to start baseline training")

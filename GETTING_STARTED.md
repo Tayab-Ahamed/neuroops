@@ -142,3 +142,57 @@ neuroops/
 ├── Makefile                  ← Generated in Phase 0
 └── README.md                 ← Generated in Phase 0, updated each phase
 ```
+
+---
+
+## Windows Compatibility Notes
+
+The `Makefile` uses Unix shell syntax and requires **Git Bash** or **WSL2** on Windows.
+
+### Option A — Git Bash
+```bash
+# Open Git Bash, then run Makefile targets normally:
+make up
+make status
+make bench
+```
+
+### Option B — WSL2 (Recommended for full Minikube support)
+```bash
+# Install WSL2 + Ubuntu, then clone the repo inside WSL2:
+git clone https://github.com/Tayab-Ahamed/neuroops.git ~/neuroops
+cd ~/neuroops
+make up
+```
+
+### Docker Compose on Windows (PowerShell)
+Docker Desktop for Windows works natively without WSL2 for the observability stack:
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+### Volume Paths
+All volume paths in `docker-compose.yml` use relative paths (e.g., `./observability/prometheus`)
+which work correctly with Docker Desktop on Windows without modification.
+
+---
+
+## Checkpoints
+
+Model checkpoints are saved under `checkpoints/` at runtime:
+
+| File | Description |
+|------|-------------|
+| `checkpoints/isolation_forest.joblib` | IsolationForest anomaly detection model (created after `POST /baseline/train`) |
+| `checkpoints/seq_model.joblib` | Ridge Regression sequence forecaster (created after training) |
+| `checkpoints/memory/` | ChromaDB RAG memory store for similar incident retrieval |
+
+> **Note on `lstm_model.pt`:** An older file named `checkpoints/lstm_model.pt` may exist from
+> a previous session. It is a joblib file (Ridge Regression), not PyTorch — the `.pt` extension
+> was a naming mistake. The server now defaults to `checkpoints/seq_model.joblib`. You can
+> override with `SEQ_MODEL_PATH=checkpoints/lstm_model.pt` in your `.env` if needed.
+
+Run `POST http://localhost:8001/baseline/train` after starting the stack to generate fresh
+checkpoints from live Prometheus data.
+

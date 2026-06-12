@@ -92,8 +92,10 @@ exclude_dirs = [
     "detector/tests",
     "agent/tests",
     "remediator/tests",
+    "observability/tests",
     "benchmarks/tests",
     "detector/.venv",
     "agent/.venv",
 ]
 skips = ["B101", "B105", "B110", "B112", "B311", "B404", "B603", "B607", "B608"]
+
