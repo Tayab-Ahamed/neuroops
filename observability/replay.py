@@ -58,9 +58,9 @@ def fetch_traces(jaeger_url, incident_id):
         response = httpx.get(url, params=params, timeout=10.0)
         response.raise_for_status()
         return response.json()
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, httpx.RequestError) as e:
         console.print(f"[bold red]Error: Failed to query Jaeger API[/bold red] - {e}")
-        return None
+        sys.exit(1)
 
 
 def process_spans(data):
