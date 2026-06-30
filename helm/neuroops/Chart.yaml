@@ -1,0 +1,14 @@
+apiVersion: v2
+name: neuroops
+description: Autonomous AI SRE Engine — detect, diagnose, remediate Kubernetes incidents
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - sre
+  - ai
+  - kubernetes
+  - observability
+maintainers:
+  - name: Tayab Ahamed
+    url: https://github.com/Tayab-Ahamed

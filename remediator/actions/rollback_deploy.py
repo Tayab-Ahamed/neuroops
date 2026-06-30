@@ -44,7 +44,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
         # 1. Read deployment to get current generation and annotations
         try:
             dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
-        except ApiException as exc:
+        except (ApiException, Exception) as exc:
             if is_not_found(exc):
                 logger.warning(
                     "Rollback skipped because target deployment was not found",
@@ -163,7 +163,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                 ):
                     rollout_complete = True
                     break
-            except ApiException as exc:
+            except (ApiException, Exception) as exc:
                 logger.warning(
                     "Error checking deployment rollout status",
                     namespace=namespace,
@@ -206,7 +206,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
             }
             return result
 
-    except ApiException as exc:
+    except (ApiException, Exception) as exc:
         duration = time.time() - start_time
         logger.error(
             "Failed to execute rollback_deployment",

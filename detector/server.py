@@ -7,14 +7,18 @@ from typing import Any
 import httpx
 import structlog
 from alerter import Alert, Alerter
+from auth import verify_api_key
 from baseline_collector import collect_historical_baseline
 from correlator import AlertCorrelator, CorrelatedAlert
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
 from models.forecaster import TrendForecaster
 from models.isolation_forest import IsolationForestModel
 from models.sequence_forecaster import SequenceForecastModel
 from pydantic import BaseModel
 from scraper import MetricWindow, PrometheusScraper
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # Prometheus metrics instrumentation
 try:
@@ -338,9 +342,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="NeuroOps Anomaly Detection Service", lifespan=lifespan)
 
+# ── Rate limiting: 60 req/min per IP by default ───────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 @app.get("/alerts", response_model=list[Alert], status_code=status.HTTP_200_OK)
-async def get_alerts():
+@limiter.limit("60/minute")
+async def get_alerts(request: Request):
     """Returns the list of active/fired alerts."""
     try:
         return active_alerts

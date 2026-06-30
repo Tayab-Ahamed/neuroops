@@ -6,13 +6,17 @@ from typing import Any
 
 import structlog
 from agents.llm import get_llm_model_name
-from fastapi import FastAPI, HTTPException, Request, Response
+from auth import verify_api_key
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from graph import graph
 from incident_store import IncidentStore
 from memory import IncidentMemory, extract_metric_vector
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from state import AgentState, Alert
 
 # Prometheus metrics instrumentation
@@ -70,6 +74,11 @@ app = FastAPI(
     ),
 )
 
+# ── Rate limiting: 30 req/min per IP by default ───────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Allow the local web-ui (file:// or localhost) to reach the API
 app.add_middleware(
     CORSMiddleware,
@@ -112,8 +121,9 @@ class RootCauseHypothesis(BaseModel):
     remediation_result: dict[str, Any] | None = None
 
 
-@app.post("/investigate", response_model=RootCauseHypothesis)
-async def investigate(alert: Alert, execute_remediation: bool = False):
+@app.post("/investigate", response_model=RootCauseHypothesis, dependencies=[Depends(verify_api_key)])
+@limiter.limit("10/minute")
+async def investigate(request: Request, alert: Alert, execute_remediation: bool = False):
     """Triggers the multi-agent LangGraph workflow to diagnose a Kubernetes incident."""
     logger.info(
         "Received alert for diagnostic investigation", alert_id=alert.id, service=alert.service

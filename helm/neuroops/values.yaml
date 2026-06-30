@@ -1,0 +1,119 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NeuroOps Helm Values
+# Override any value with: helm install neuroops ./helm/neuroops --set key=value
+# ─────────────────────────────────────────────────────────────────────────────
+
+global:
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+  apiKey: ""          # Set NEUROOPS_API_KEY — enables X-API-Key auth on all services
+
+# ── Detector ─────────────────────────────────────────────────────────────────
+detector:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: neuroops/detector
+    tag: latest
+  service:
+    type: ClusterIP
+    port: 8001
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: detector.neuroops.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ── Agent ─────────────────────────────────────────────────────────────────────
+agent:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: neuroops/agent
+    tag: latest
+  service:
+    type: ClusterIP
+    port: 8002
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: agent.neuroops.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ── Remediator ───────────────────────────────────────────────────────────────
+remediator:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: neuroops/remediator
+    tag: latest
+  service:
+    type: ClusterIP
+    port: 8003
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: remediator.neuroops.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ── Infrastructure URLs ───────────────────────────────────────────────────────
+prometheus:
+  url: "http://prometheus:9090"
+
+jaeger:
+  queryUrl: "http://jaeger-query:16686"
+
+otel:
+  collectorEndpoint: "http://otel-collector:4317"
+
+# ── Secrets (stored in K8s Secret, never in ConfigMap) ───────────────────────
+anthropic:
+  apiKey: ""
+
+github:
+  token: ""
+
+# ── Application Settings ──────────────────────────────────────────────────────
+app:
+  targetNamespace: "default"
+  confidenceThreshold: "0.65"
+  anomalyContamination: "0.05"
+  slackWebhookUrl: ""
+  slackApiToken: ""
+  slackChannelId: ""

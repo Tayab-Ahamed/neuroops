@@ -88,8 +88,8 @@ def prompt_human(hypothesis: dict[str, Any] | Any, action: str) -> bool:
         logger.info("Test approval override detected", value=test_approval)
         return test_approval.lower() == "true"
 
-    if not sys.stdin.isatty():
-        logger.warning("Non-interactive mode — human approval unavailable, defaulting to reject")
+    if os.getenv("NEUROOPS_NON_INTERACTIVE", "").lower() == "true":
+        logger.warning("Non-interactive mode (NEUROOPS_NON_INTERACTIVE=true) — defaulting to reject")
         return False
 
     # Extract fields from dict or Pydantic model safely

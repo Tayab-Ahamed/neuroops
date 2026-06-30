@@ -1,0 +1,63 @@
+name: Bug Report
+description: Report a bug in NeuroOps
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out all required fields.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Detector (anomaly detection)
+        - Agent (LangGraph RCA)
+        - Remediator (actions)
+        - Observability (dashboard / replay)
+        - Benchmarks
+        - Web UI
+        - Helm / Deployment
+        - Docker Compose
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Start services with docker compose up
+        2. Send POST /investigate with payload...
+        3. See error...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs / Stack Trace
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: NeuroOps Version
+      placeholder: "e.g. 1.0.0"
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python Version
+      options:
+        - "3.11"
+        - "3.12"
+        - "3.13"
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "e.g. Ubuntu 22.04, macOS 14, Windows 11"

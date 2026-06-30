@@ -1,0 +1,55 @@
+╔══════════════════════════════════════════════════════════════╗
+║          NeuroOps — Autonomous AI SRE Engine                 ║
+╚══════════════════════════════════════════════════════════════╝
+
+  Release  : {{ .Release.Name }}
+  Namespace: {{ .Release.Namespace }}
+  Version  : {{ .Chart.AppVersion }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEPLOYED SERVICES
+─────────────────
+{{- if .Values.detector.enabled }}
+  Detector  (anomaly detection) → {{ include "neuroops.fullname" . }}-detector:{{ .Values.detector.service.port }}
+{{- end }}
+{{- if .Values.agent.enabled }}
+  Agent     (LangGraph RCA)     → {{ include "neuroops.fullname" . }}-agent:{{ .Values.agent.service.port }}
+{{- end }}
+{{- if .Values.remediator.enabled }}
+  Remediator (K8s remediation)  → {{ include "neuroops.fullname" . }}-remediator:{{ .Values.remediator.service.port }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUICK PORT-FORWARDS (for local testing)
+────────────────────────────────────────
+  kubectl port-forward svc/{{ include "neuroops.fullname" . }}-detector {{ .Values.detector.service.port }}:{{ .Values.detector.service.port }} -n {{ .Release.Namespace }}
+  kubectl port-forward svc/{{ include "neuroops.fullname" . }}-agent {{ .Values.agent.service.port }}:{{ .Values.agent.service.port }} -n {{ .Release.Namespace }}
+  kubectl port-forward svc/{{ include "neuroops.fullname" . }}-remediator {{ .Values.remediator.service.port }}:{{ .Values.remediator.service.port }} -n {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NEXT STEPS
+──────────
+1. Verify pods are Running:
+     kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Check health endpoints:
+     curl http://localhost:{{ .Values.detector.service.port }}/health
+     curl http://localhost:{{ .Values.agent.service.port }}/health
+     curl http://localhost:{{ .Values.remediator.service.port }}/health
+
+3. Train the anomaly detector:
+     curl -X POST http://localhost:{{ .Values.detector.service.port }}/baseline/train
+
+4. Tail all logs:
+     kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -f --max-log-requests=10
+
+5. Upgrade the release:
+     helm upgrade {{ .Release.Name }} ./helm/neuroops -n {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Happy remediating! 🧠⚡
+

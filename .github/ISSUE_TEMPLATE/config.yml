@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: NeuroOps Documentation
+    url: https://github.com/Tayab-Ahamed/neuroops#readme
+    about: Check the README for setup, API reference, and architecture docs

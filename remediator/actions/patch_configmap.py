@@ -33,7 +33,7 @@ def patch_configmap(namespace: str, name: str, patch: dict) -> ActionResult:
 
         try:
             v1.read_namespaced_config_map(name=name, namespace=namespace)
-        except ApiException as exc:
+        except (ApiException, Exception) as exc:
             if is_not_found(exc):
                 logger.warning(
                     "ConfigMap patch skipped because target ConfigMap was not found",
@@ -56,7 +56,7 @@ def patch_configmap(namespace: str, name: str, patch: dict) -> ActionResult:
             duration_seconds=duration,
         )
 
-    except ApiException as exc:
+    except (ApiException, Exception) as exc:
         duration = time.time() - start_time
         logger.error(
             "Failed to patch ConfigMap",

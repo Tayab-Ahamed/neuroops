@@ -23,13 +23,15 @@ let state = {
   sseSource:       null,     // the live EventSource instance
   pollFallbackId:  null,     // setInterval id used in fallback polling
   services: { detector: 'loading', agent: 'loading', remediator: 'loading' },
-  alerts:       [],
+  alerts:           [],
+  predictiveAlerts: [],      // pre-breach warnings from /alerts/predictive
   incidents:    [],
   mttr:         null,
   cost:         null,
   sla:          null,
   trendData:    { p50: [], p95: [] },
 };
+
 
 // ── Demo Data ─────────────────────────────────────────────────
 const DEMO_INCIDENTS = [
@@ -292,6 +294,7 @@ async function fetchAll() {
     fetchAgentHealth(),
     fetchRemediatorHealth(),
     fetchAlerts(),
+    fetchPredictiveAlerts(),
     // Only fetch incidents via REST when SSE is not active
     ...(state.sseActive ? [] : [fetchIncidents()]),
     fetchMTTR(),
@@ -346,6 +349,45 @@ async function fetchAlerts() {
     const d = await apiFetch(`${API.detector}/alerts`);
     state.alerts = Array.isArray(d) ? d : [];
   } catch { state.alerts = []; }
+}
+
+async function fetchPredictiveAlerts() {
+  try {
+    const d = await apiFetch(`${API.detector}/alerts/predictive`);
+    state.predictiveAlerts = Array.isArray(d) ? d : [];
+    renderPredictivePanel();
+  } catch { state.predictiveAlerts = []; }
+}
+
+function renderPredictivePanel() {
+  const panel  = document.getElementById('predictive-panel');
+  const list   = document.getElementById('predictive-list');
+  const badge  = document.getElementById('predictive-count');
+  if (!panel || !list) return;
+
+  const items = state.predictiveAlerts;
+  if (badge) badge.textContent = items.length;
+
+  if (!items.length) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  list.innerHTML = items.map(a => {
+    const svc   = a.service || 'unknown';
+    const score = typeof a.anomaly_score === 'number' ? a.anomaly_score.toFixed(3) : '—';
+    const metric = a.metric_snapshot
+      ? Object.entries(a.metric_snapshot).slice(0, 2).map(([k, v]) => `${k}: ${parseFloat(v).toFixed(2)}`).join(' · ')
+      : '';
+    return `
+      <div class="predictive-item">
+        <div class="predictive-svc">${svc}</div>
+        <div class="predictive-score">score ${score}</div>
+        ${metric ? `<div class="predictive-metric">${metric}</div>` : ''}
+        <div class="predictive-tag">⚠ trending to breach</div>
+      </div>`;
+  }).join('');
 }
 
 async function fetchIncidents() {
@@ -614,14 +656,54 @@ function renderInfoCards() {
 
   const costEl = document.getElementById('info-cost');
   const tokensEl = document.getElementById('info-tokens');
+  const savingsEl = document.getElementById('info-savings');
+  const savingsSubEl = document.getElementById('info-savings-sub');
+
   if (state.services.agent === 'ok' && state.cost) {
     if (costEl) costEl.textContent = `$${state.cost.total_cost_usd.toFixed(4)}`;
     if (tokensEl) tokensEl.textContent = `${(state.cost.total_tokens || 0).toLocaleString()} tokens`;
+
+    // Savings ticker — manual SRE cost ($150/hr × avg 32min MTTR × incidents) vs AI cost
+    const savings = state.cost.savings_usd ?? (state.cost.manual_sre_cost_usd ?? 0) - (state.cost.total_cost_usd ?? 0);
+    if (savingsEl && savings > 0) {
+      savingsEl.textContent = `$${savings.toFixed(2)}`;
+      if (savingsSubEl) savingsSubEl.textContent = `vs ~$${(state.cost.manual_sre_cost_usd ?? 0).toFixed(0)} manual`;
+    }
   } else {
     if (costEl) costEl.textContent = '—';
     if (tokensEl) tokensEl.textContent = '— tokens';
+    if (savingsEl) savingsEl.textContent = '—';
+    if (savingsSubEl) savingsSubEl.textContent = 'agent offline';
+  }
+
+  // P1 shockwave — fire orb pulse when critical alerts are active
+  triggerP1Shockwave();
+}
+
+function triggerP1Shockwave() {
+  const orb = document.querySelector('.orb-sphere');
+  const wrap = document.querySelector('.orb-wrap');
+  if (!orb || !wrap) return;
+
+  const hasP1 = state.alerts.some(a => a.severity === 'P1');
+  if (hasP1 && !orb._p1Active) {
+    orb._p1Active = true;
+    orb.classList.add('p1-alert');
+
+    // Inject shockwave ring DOM element
+    const ring = document.createElement('div');
+    ring.className = 'shockwave-ring';
+    wrap.appendChild(ring);
+    setTimeout(() => ring.remove(), 1300);
+
+    // Remove class after animation so it can re-trigger
+    setTimeout(() => {
+      orb.classList.remove('p1-alert');
+      orb._p1Active = false;
+    }, 7000);
   }
 }
+
 
 // ── Stats Row ─────────────────────────────────────────────────
 function renderStatsRow() {

@@ -115,6 +115,15 @@ def verify_resolution(alert: dict[str, Any] | Any, timeout_seconds: int = 120) -
                 service=service,
                 error=str(exc),
             )
+        except Exception as exc:
+            consecutive_clean_polls = 0
+            logger.warning(
+                "verifier: Unexpected error during verification poll, will retry",
+                detector=detector_url,
+                alert_id=alert_id,
+                service=service,
+                error=str(exc),
+            )
 
         time.sleep(5)
 

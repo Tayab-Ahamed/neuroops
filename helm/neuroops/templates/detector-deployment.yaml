@@ -1,0 +1,50 @@
+{{- if .Values.detector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "neuroops.fullname" . }}-detector
+  labels:
+    {{- include "neuroops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: detector
+spec:
+  replicas: {{ .Values.detector.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "neuroops.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: detector
+  template:
+    metadata:
+      labels:
+        {{- include "neuroops.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: detector
+    spec:
+      containers:
+        - name: detector
+          image: {{ include "neuroops.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.detector.image.repository "tag" .Values.detector.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.detector.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "neuroops.fullname" . }}-config
+            - secretRef:
+                name: {{ include "neuroops.fullname" . }}-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.detector.resources | nindent 12 }}
+{{- end }}

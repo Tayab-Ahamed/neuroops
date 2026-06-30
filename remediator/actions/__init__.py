@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from github import Github, GithubException
+from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
@@ -48,13 +49,38 @@ def skipped_not_found(start_time: float) -> ActionResult:
 def timeout_result(start_time: float) -> ActionResult:
     return ActionResult(
         success=False,
-        action_taken="timeout waiting for ready state",
+        action_taken="verification timed out",
         duration_seconds=time.time() - start_time,
     )
 
 
+def get_k8s_context() -> str | None:
+    """Returns the configured Kubernetes context name, or None for current-context."""
+    return os.getenv("KUBECONFIG_CONTEXT") or None
+
+
+def get_k8s_api_client() -> k8s_client.CoreV1Api:
+    """Returns a CoreV1Api client for the configured cluster context."""
+    context = get_k8s_context()
+    if context:
+        api_client = k8s_config.new_client_from_config(context=context)
+        return k8s_client.CoreV1Api(api_client=api_client)
+    return k8s_client.CoreV1Api()
+
+
+def get_k8s_apps_client() -> k8s_client.AppsV1Api:
+    """Returns an AppsV1Api client for the configured cluster context."""
+    context = get_k8s_context()
+    if context:
+        api_client = k8s_config.new_client_from_config(context=context)
+        return k8s_client.AppsV1Api(api_client=api_client)
+    return k8s_client.AppsV1Api()
+
+
 # Initialize Kubernetes client configuration
 k8s_configured = False
+_k8s_context = get_k8s_context()
+
 try:
     try:
         k8s_config.load_incluster_config()
@@ -65,10 +91,13 @@ try:
             "remediator: In-cluster Kubernetes configuration unavailable",
             error=str(exc),
         )
-        k8s_config.load_kube_config()
+        k8s_config.load_kube_config(context=_k8s_context)
         k8s_configured = True
-        logger.info("remediator: Loaded external kubeconfig configuration")
-except ConfigException as e:
+        logger.info(
+            "remediator: Loaded external kubeconfig configuration",
+            context=_k8s_context or "(current-context)",
+        )
+except Exception as e:
     logger.warning(
         "remediator: Kubernetes client is not configured, running K8s actions in mock mode",
         error=str(e),
@@ -88,7 +117,7 @@ try:
         logger.warning(
             "remediator: GITHUB_TOKEN is not configured, running GitHub actions in mock mode"
         )
-except GithubException as e:
+except Exception as e:
     logger.warning(
         "remediator: Failed to configure GitHub client, running in mock mode", error=str(e)
     )

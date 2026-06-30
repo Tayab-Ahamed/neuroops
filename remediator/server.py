@@ -6,10 +6,14 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
-from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from auth import verify_api_key
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # Import actions, verifier, and human loop
 from remediator.actions import ActionResult, k8s_configured, logger
@@ -105,6 +109,7 @@ class HealthResponse(BaseModel):
     status: str
     actions_count: int
     k8s_configured: bool
+    k8s_context: str = "(current-context)"
 
 
 class SlackInteractionResponse(BaseModel):
@@ -191,6 +196,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── Rate limiting: 10 req/min on write endpoints ───────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 def extract_service_name(hypothesis: str, reasoning: str) -> str:
     """Helper to parse affected service name from hypothesis/reasoning text."""
@@ -212,8 +222,10 @@ from remediator.chatops import send_slack_alert
     response_model=ActionResult,
     response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_api_key)],
 )
-async def remediate(request: RemediationRequest):
+@limiter.limit("10/minute")
+async def remediate(http_request: Request, request: RemediationRequest):
     if not is_known_action(request.recommended_action):
         logger.warning(
             "Rejected remediation request with unknown action",
@@ -406,11 +418,10 @@ async def _remediate_impl(request: RemediationRequest) -> ActionResult:
                         )
                     else:
                         pod_name = f"{service}-pod-fallback"
-                except ApiException as e:
+                except (ApiException, Exception) as e:
                     logger.warning(
                         "Could not query pods to resolve name, falling back",
-                        status=e.status,
-                        reason=e.reason,
+                        error=str(e),
                     )
                     pod_name = f"{service}-pod-fallback"
             else:

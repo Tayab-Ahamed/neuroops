@@ -1,0 +1,19 @@
+{{- if .Values.detector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "neuroops.fullname" . }}-detector
+  labels:
+    {{- include "neuroops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: detector
+spec:
+  type: {{ .Values.detector.service.type }}
+  selector:
+    {{- include "neuroops.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: detector
+  ports:
+    - name: http
+      port: {{ .Values.detector.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

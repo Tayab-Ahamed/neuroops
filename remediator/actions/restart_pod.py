@@ -44,7 +44,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
             labels = pod.metadata.labels or {}
             label_selector = ",".join([f"{k}={v}" for k, v in labels.items()])
             logger.info("Retrieved pod labels for tracking", pod_name=pod_name, labels=labels)
-        except ApiException as exc:
+        except (ApiException, Exception) as exc:
             if is_not_found(exc):
                 logger.warning(
                     "Pod restart skipped because target pod was not found",
@@ -87,7 +87,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
             logger.info("Deleting namespaced pod", namespace=namespace, pod_name=pod_name)
             try:
                 v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
-            except ApiException as exc:
+            except (ApiException, Exception) as exc:
                 if is_not_found(exc):
                     logger.warning(
                         "Pod disappeared before delete; waiting for replacement readiness",
@@ -153,7 +153,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                 if all_ready and (found_new or len(pods_list.items) > 0):
                     recreated_and_ready = True
                     break
-            except ApiException as exc:
+            except (ApiException, Exception) as exc:
                 logger.warning(
                     "Error listing pods during recreation check",
                     namespace=namespace,
@@ -174,7 +174,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
             logger.error("Pod restart verification timed out", pod_name=pod_name, duration=duration)
             return timeout_result(start_time)
 
-    except ApiException as exc:
+    except (ApiException, Exception) as exc:
         duration = time.time() - start_time
         logger.error(
             "Failed to execute restart_pod",

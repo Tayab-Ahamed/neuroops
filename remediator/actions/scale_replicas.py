@@ -71,7 +71,7 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
         # 1. Check current replicas to check for early exit/idempotency
         try:
             dep = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=namespace)
-        except ApiException as exc:
+        except (ApiException, Exception) as exc:
             if is_not_found(exc):
                 logger.warning(
                     "Scale skipped because target deployment was not found",
@@ -139,7 +139,7 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                     if ready_replicas == replicas and updated_replicas == replicas:
                         scale_complete = True
                         break
-            except ApiException as exc:
+            except (ApiException, Exception) as exc:
                 logger.warning(
                     "Error checking deployment replica scaling status",
                     namespace=namespace,
@@ -170,7 +170,7 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
             )
             return timeout_result(start_time)
 
-    except ApiException as exc:
+    except (ApiException, Exception) as exc:
         duration = time.time() - start_time
         logger.error(
             "Failed to scale deployment",
