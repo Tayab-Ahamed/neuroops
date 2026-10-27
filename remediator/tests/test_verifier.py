@@ -1,4 +1,5 @@
 import os
+from itertools import chain, count, repeat
 from unittest.mock import MagicMock, patch
 
 from remediator.verifier import verify_resolution
@@ -45,7 +46,7 @@ def test_verify_resolution_timeout():
     with (
         patch("httpx.Client", return_value=mock_client),
         patch("time.sleep"),
-        patch("time.time", side_effect=[0, 5, 10, 15, 200]),
+        patch("time.time", side_effect=count(0, 10)),
         patch.dict(os.environ),
     ):
         os.environ.pop("REMEDIATOR_TEST_APPROVAL", None)
@@ -61,16 +62,14 @@ def test_verify_resolution_non_200_and_error():
     mock_response_bad.status_code = 500
 
     mock_client = MagicMock()
-    # First request returns 500, second throws connection error, third succeeds with empty active alerts (cleared!)
+    # A clean result must remain available for the required two consecutive polls.
     mock_response_ok = MagicMock()
     mock_response_ok.status_code = 200
     mock_response_ok.json.return_value = []
 
-    mock_client.__enter__.return_value.get.side_effect = [
-        mock_response_bad,
-        Exception("connection timeout"),
-        mock_response_ok,
-    ]
+    mock_client.__enter__.return_value.get.side_effect = chain(
+        [mock_response_bad, Exception("connection timeout")], repeat(mock_response_ok)
+    )
 
     with (
         patch("httpx.Client", return_value=mock_client),

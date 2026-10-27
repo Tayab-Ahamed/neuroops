@@ -50,7 +50,7 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                     "Rollback skipped because target deployment was not found",
                     namespace=namespace,
                     deployment=deployment_name,
-                    status=exc.status,
+                    status=getattr(exc, "status", None),
                 )
                 return skipped_not_found(start_time)
             raise
@@ -168,8 +168,8 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
                     "Error checking deployment rollout status",
                     namespace=namespace,
                     deployment=deployment_name,
-                    status=exc.status,
-                    reason=exc.reason,
+                    status=getattr(exc, "status", None),
+                    reason=getattr(exc, 'reason', str(exc)),
                 )
 
         duration = time.time() - start_time
@@ -212,14 +212,14 @@ def rollback_deployment(namespace: str, deployment_name: str) -> ActionResult:
             "Failed to execute rollback_deployment",
             namespace=namespace,
             deployment=deployment_name,
-            status=exc.status,
-            reason=exc.reason,
+            status=getattr(exc, "status", None),
+            reason=getattr(exc, 'reason', str(exc)),
         )
         return ActionResult(
             success=False,
             action_taken=(
                 f"Failed to rollback deployment '{deployment_name}' in namespace "
-                f"'{namespace}': {exc.reason}"
+                f"'{namespace}': {getattr(exc, 'reason', str(exc))}"
             ),
             duration_seconds=duration,
         )

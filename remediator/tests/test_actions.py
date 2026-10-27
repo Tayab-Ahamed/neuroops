@@ -1,5 +1,8 @@
 import os
+from itertools import chain, count, repeat
 from unittest.mock import MagicMock, patch
+
+from kubernetes.config.config_exception import ConfigException
 
 from remediator.actions.open_github_pr import open_pr
 from remediator.actions.patch_configmap import patch_configmap
@@ -23,6 +26,7 @@ def test_restart_pod_real_success():
     mock_v1 = MagicMock()
     # Read pod metadata (returns labels)
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend", "pod-template-hash": "123"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -49,7 +53,7 @@ def test_restart_pod_real_success():
         assert mock_v1.delete_namespaced_pod.called
 
 
-def test_restart_pod_metadata_failure_fallback():
+def test_restart_pod_metadata_failure_is_reported_without_deletion():
     mock_v1 = MagicMock()
     # Read pod raises exception (metadata fail)
     mock_v1.read_namespaced_pod.side_effect = Exception("failed to read")
@@ -72,13 +76,15 @@ def test_restart_pod_metadata_failure_fallback():
         patch("time.sleep"),
     ):
         res = restart_pod("default", "backend-pod")
-        assert res.success is True
-        assert mock_v1.delete_namespaced_pod.called
+        assert res.success is False
+        assert "failed to read" in res.action_taken
+        mock_v1.delete_namespaced_pod.assert_not_called()
 
 
 def test_restart_pod_timeout():
     mock_v1 = MagicMock()
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -98,7 +104,7 @@ def test_restart_pod_timeout():
         patch("remediator.actions.restart_pod.k8s_configured", True),
         patch("kubernetes.client.CoreV1Api", return_value=mock_v1),
         patch("time.sleep"),
-        patch("time.time", side_effect=[0, 10, 20, 30, 40, 50, 60, 70, 80, 200]),
+        patch("time.time", side_effect=count(0, 10)),
     ):
         res = restart_pod("default", "backend-pod")
         assert res.success is False
@@ -107,6 +113,8 @@ def test_restart_pod_timeout():
 
 def test_restart_pod_exception():
     mock_v1 = MagicMock()
+    mock_v1.read_namespaced_pod.return_value.metadata.deletion_timestamp = None
+    mock_v1.read_namespaced_pod.return_value.metadata.labels = {"app": "backend"}
     mock_v1.delete_namespaced_pod.side_effect = Exception("General K8s Error")
 
     with (
@@ -163,7 +171,7 @@ def test_rollback_deployment_success():
     mock_status_dep.status.available_replicas = 2
 
     # Trigger read deployment status check
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.rollback_deploy.k8s_configured", True),
@@ -251,17 +259,17 @@ def test_rollback_deployment_timeout():
     mock_status_dep.spec.replicas = 2
     mock_status_dep.status.updated_replicas = 1
 
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.rollback_deploy.k8s_configured", True),
         patch("kubernetes.client.AppsV1Api", return_value=mock_apps),
         patch("time.sleep"),
-        patch("time.time", side_effect=[0, 10, 20, 30, 40, 50, 60, 70, 80, 200]),
+        patch("time.time", side_effect=count(0, 10)),
     ):
         res = rollback_deployment("default", "backend")
         assert res.success is False
-        assert "status verification timed out" in res.action_taken
+        assert "verification timed out" in res.action_taken
 
 
 # ==========================================
@@ -286,7 +294,7 @@ def test_scale_deployment_idempotency_success():
     mock_status_dep = MagicMock()
     mock_status_dep.status.ready_replicas = 3
     mock_status_dep.status.updated_replicas = 3
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.scale_replicas.k8s_configured", True),
@@ -295,7 +303,7 @@ def test_scale_deployment_idempotency_success():
     ):
         res = scale_deployment("default", "backend", 3)
         assert res.success is True
-        assert "Successfully scaled deployment" in res.action_taken
+        assert "already at target replicas" in res.action_taken
         assert not mock_apps.patch_namespaced_deployment.called
 
 
@@ -309,7 +317,7 @@ def test_scale_deployment_scaling_success():
     mock_status_dep = MagicMock()
     mock_status_dep.status.ready_replicas = 3
     mock_status_dep.status.updated_replicas = 3
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.scale_replicas.k8s_configured", True),
@@ -330,7 +338,7 @@ def test_scale_deployment_scale_to_zero():
     # Verification checks (checking replica counts fall to 0)
     mock_status_dep = MagicMock()
     mock_status_dep.status.replicas = 0
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.scale_replicas.k8s_configured", True),
@@ -352,13 +360,13 @@ def test_scale_deployment_timeout():
     mock_status_dep = MagicMock()
     mock_status_dep.status.ready_replicas = 1
     mock_status_dep.status.updated_replicas = 3
-    mock_apps.read_namespaced_deployment.side_effect = [mock_dep, mock_status_dep]
+    mock_apps.read_namespaced_deployment.side_effect = chain([mock_dep], repeat(mock_status_dep))
 
     with (
         patch("remediator.actions.scale_replicas.k8s_configured", True),
         patch("kubernetes.client.AppsV1Api", return_value=mock_apps),
         patch("time.sleep"),
-        patch("time.time", side_effect=[0, 10, 20, 30, 40, 50, 60, 70, 80, 200]),
+        patch("time.time", side_effect=count(0, 10)),
     ):
         res = scale_deployment("default", "backend", 3)
         assert res.success is False
@@ -505,7 +513,7 @@ def test_module_initialization_incluster_success():
 
 def test_module_initialization_kubeconfig_success():
     mock_k8s_config = MagicMock()
-    mock_k8s_config.load_incluster_config.side_effect = Exception("not in cluster")
+    mock_k8s_config.load_incluster_config.side_effect = ConfigException("not in cluster")
     mock_k8s_config.load_kube_config.return_value = None
 
     mock_github = MagicMock()
@@ -557,6 +565,7 @@ def test_open_pr_branch_already_exists():
 def test_restart_pod_empty_pods_list_first_then_success():
     mock_v1 = MagicMock()
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -586,6 +595,7 @@ def test_restart_pod_empty_pods_list_first_then_success():
 def test_restart_pod_no_container_statuses():
     mock_v1 = MagicMock()
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -620,6 +630,7 @@ def test_restart_pod_no_container_statuses():
 def test_restart_pod_list_exception_in_loop():
     mock_v1 = MagicMock()
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -647,6 +658,7 @@ def test_restart_pod_list_exception_in_loop():
 def test_restart_pod_timeout_phase_pending():
     mock_v1 = MagicMock()
     mock_pod = MagicMock()
+    mock_pod.metadata.deletion_timestamp = None
     mock_pod.metadata.labels = {"app": "backend"}
     mock_v1.read_namespaced_pod.return_value = mock_pod
 
@@ -663,7 +675,7 @@ def test_restart_pod_timeout_phase_pending():
         patch("remediator.actions.restart_pod.k8s_configured", True),
         patch("kubernetes.client.CoreV1Api", return_value=mock_v1),
         patch("time.sleep"),
-        patch("time.time", side_effect=[0, 10, 20, 30, 40, 50, 60, 70, 80, 200]),
+        patch("time.time", side_effect=count(0, 10)),
     ):
         res = restart_pod("default", "backend-pod")
         assert res.success is False
