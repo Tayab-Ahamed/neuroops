@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +8,7 @@ from remediator.server import (
     actions_history,
     app,
     flapping_history,
+    limiter,
     remediation_store,
 )
 
@@ -16,6 +17,7 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clear_history():
+    limiter.reset()
     actions_history.clear()
     flapping_history.clear()
     remediation_store.clear()
@@ -25,6 +27,20 @@ def test_get_actions_empty():
     response = client.get("/actions")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_remediation_rate_limit_remains_enabled():
+    payload = {
+        "incident_id": "rate-limit-check", "hypothesis": "test", "confidence": 0.9,
+        "recommended_action": "none", "requires_human_approval": False, "reasoning": "test",
+    }
+    result = ActionResult(success=True, action_taken="planned", duration_seconds=0)
+    with patch("remediator.server._remediate_impl", new_callable=AsyncMock) as execute:
+        execute.return_value = result
+        for _ in range(10):
+            assert client.post("/remediate", json=payload).status_code == 200
+        assert client.post("/remediate", json=payload).status_code == 429
+        assert execute.await_count == 10
 
 
 def test_health_endpoint():

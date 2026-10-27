@@ -50,7 +50,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                     "Pod restart skipped because target pod was not found",
                     namespace=namespace,
                     pod_name=pod_name,
-                    status=exc.status,
+                    status=getattr(exc, "status", None),
                 )
                 return skipped_not_found(start_time)
             duration = time.time() - start_time
@@ -58,14 +58,14 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                 "Failed to read pod before restart",
                 namespace=namespace,
                 pod_name=pod_name,
-                status=exc.status,
-                reason=exc.reason,
+                status=getattr(exc, "status", None),
+                reason=getattr(exc, 'reason', str(exc)),
             )
             return ActionResult(
                 success=False,
                 action_taken=(
                     f"Failed to restart pod '{pod_name}' in namespace '{namespace}': "
-                    f"{exc.reason}"
+                    f"{getattr(exc, 'reason', str(exc))}"
                 ),
                 duration_seconds=duration,
             )
@@ -93,7 +93,7 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                         "Pod disappeared before delete; waiting for replacement readiness",
                         namespace=namespace,
                         pod_name=pod_name,
-                        status=exc.status,
+                        status=getattr(exc, "status", None),
                     )
                 else:
                     duration = time.time() - start_time
@@ -101,14 +101,14 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                         "Failed deleting pod",
                         namespace=namespace,
                         pod_name=pod_name,
-                        status=exc.status,
-                        reason=exc.reason,
+                        status=getattr(exc, "status", None),
+                        reason=getattr(exc, 'reason', str(exc)),
                     )
                     return ActionResult(
                         success=False,
                         action_taken=(
                             f"Failed to restart pod '{pod_name}' in namespace "
-                            f"'{namespace}': {exc.reason}"
+                            f"'{namespace}': {getattr(exc, 'reason', str(exc))}"
                         ),
                         duration_seconds=duration,
                     )
@@ -158,8 +158,8 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
                     "Error listing pods during recreation check",
                     namespace=namespace,
                     pod_name=pod_name,
-                    status=exc.status,
-                    reason=exc.reason,
+                    status=getattr(exc, "status", None),
+                    reason=getattr(exc, 'reason', str(exc)),
                 )
 
         duration = time.time() - start_time
@@ -180,13 +180,13 @@ def restart_pod(namespace: str, pod_name: str) -> ActionResult:
             "Failed to execute restart_pod",
             namespace=namespace,
             pod_name=pod_name,
-            status=exc.status,
-            reason=exc.reason,
+            status=getattr(exc, "status", None),
+            reason=getattr(exc, 'reason', str(exc)),
         )
         return ActionResult(
             success=False,
             action_taken=(
-                f"Failed to restart pod '{pod_name}' in namespace '{namespace}': {exc.reason}"
+                f"Failed to restart pod '{pod_name}' in namespace '{namespace}': {getattr(exc, 'reason', str(exc))}"
             ),
             duration_seconds=duration,
         )

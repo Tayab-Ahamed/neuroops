@@ -39,7 +39,7 @@ def patch_configmap(namespace: str, name: str, patch: dict) -> ActionResult:
                     "ConfigMap patch skipped because target ConfigMap was not found",
                     namespace=namespace,
                     name=name,
-                    status=exc.status,
+                    status=getattr(exc, "status", None),
                 )
                 return skipped_not_found(start_time)
             raise
@@ -62,13 +62,13 @@ def patch_configmap(namespace: str, name: str, patch: dict) -> ActionResult:
             "Failed to patch ConfigMap",
             namespace=namespace,
             name=name,
-            status=exc.status,
-            reason=exc.reason,
+            status=getattr(exc, "status", None),
+            reason=getattr(exc, 'reason', str(exc)),
         )
         return ActionResult(
             success=False,
             action_taken=(
-                f"Failed to patch ConfigMap '{name}' in namespace '{namespace}': {exc.reason}"
+                f"Failed to patch ConfigMap '{name}' in namespace '{namespace}': {getattr(exc, 'reason', str(exc))}"
             ),
             duration_seconds=duration,
         )

@@ -6,7 +6,6 @@ import structlog
 from github import Github, GithubException
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
-from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
 from pydantic import BaseModel
 
@@ -34,8 +33,8 @@ def get_action_timeout_seconds() -> float:
         return 90.0
 
 
-def is_not_found(exc: ApiException) -> bool:
-    return exc.status == 404
+def is_not_found(exc: Exception) -> bool:
+    return getattr(exc, "status", None) == 404
 
 
 def skipped_not_found(start_time: float) -> ActionResult:

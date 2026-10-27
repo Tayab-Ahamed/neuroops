@@ -77,7 +77,7 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                     "Scale skipped because target deployment was not found",
                     namespace=namespace,
                     deployment=deployment_name,
-                    status=exc.status,
+                    status=getattr(exc, "status", None),
                 )
                 return skipped_not_found(start_time)
             raise
@@ -144,8 +144,8 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
                     "Error checking deployment replica scaling status",
                     namespace=namespace,
                     deployment=deployment_name,
-                    status=exc.status,
-                    reason=exc.reason,
+                    status=getattr(exc, "status", None),
+                    reason=getattr(exc, 'reason', str(exc)),
                 )
 
         duration = time.time() - start_time
@@ -176,14 +176,14 @@ def scale_deployment(namespace: str, deployment_name: str, replicas: int) -> Act
             "Failed to scale deployment",
             namespace=namespace,
             deployment=deployment_name,
-            status=exc.status,
-            reason=exc.reason,
+            status=getattr(exc, "status", None),
+            reason=getattr(exc, 'reason', str(exc)),
         )
         return ActionResult(
             success=False,
             action_taken=(
                 f"Failed to scale deployment '{deployment_name}' in namespace "
-                f"'{namespace}': {exc.reason}"
+                f"'{namespace}': {getattr(exc, 'reason', str(exc))}"
             ),
             duration_seconds=duration,
         )

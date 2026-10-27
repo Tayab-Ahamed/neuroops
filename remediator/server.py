@@ -125,20 +125,20 @@ def internal_error(detail: str) -> HTTPException:
 
 
 def normalize_action(action: str) -> str:
-    return action.strip().lower()
+    action = action.strip().lower()
+    return {
+        "restart_pod": "restart",
+        "rollback_deploy": "rollback",
+        "rollback_deployment": "rollback",
+        "scale_replicas": "scale",
+        "scale_deployment": "scale",
+        "open_github_pr": "open_pr",
+    }.get(action, action)
 
 
 def is_known_action(action: str) -> bool:
     action_type = normalize_action(action)
-    return (
-        action_type == "none"
-        or "restart" in action_type
-        or "rollback" in action_type
-        or "scale" in action_type
-        or "patch_configmap" in action_type
-        or "open_pr" in action_type
-        or "open_github_pr" in action_type
-    )
+    return action_type in {"none", "restart", "rollback", "scale", "patch_configmap", "open_pr"}
 
 
 def _tcp_connect_check(url: str, service_name: str) -> None:
@@ -225,26 +225,26 @@ from remediator.chatops import send_slack_alert
     dependencies=[Depends(verify_api_key)],
 )
 @limiter.limit("10/minute")
-async def remediate(http_request: Request, request: RemediationRequest):
-    if not is_known_action(request.recommended_action):
+async def remediate(request: Request, payload: RemediationRequest):
+    if not is_known_action(payload.recommended_action):
         logger.warning(
             "Rejected remediation request with unknown action",
-            incident_id=request.incident_id,
-            action=request.recommended_action,
+            incident_id=payload.incident_id,
+            action=payload.recommended_action,
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unknown remediation action",
         )
     try:
-        return await _remediate_impl(request)
+        return await _remediate_impl(payload)
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(
             "Unexpected error while processing remediation request",
-            incident_id=request.incident_id,
-            action=request.recommended_action,
+            incident_id=payload.incident_id,
+            action=payload.recommended_action,
             error=str(exc),
             exc_info=True,
         )
@@ -300,7 +300,7 @@ async def _remediate_impl(request: RemediationRequest) -> ActionResult:
     # 2. Extract service and configurations
     service = extract_service_name(request.hypothesis, request.reasoning)
     namespace = request.namespace or "neuroops-demo"
-    action_type = request.recommended_action.lower()
+    action_type = normalize_action(request.recommended_action)
 
     logger.info(
         "Parsed remediation target details",
@@ -399,7 +399,7 @@ async def _remediate_impl(request: RemediationRequest) -> ActionResult:
     result = None
 
     # 3. Decision Tree Router
-    if "restart" in action_type:
+    if action_type == "restart":
         pod_name = request.pod_name
         # If pod name is not supplied, locate it in the cluster using labels
         if not pod_name:
@@ -429,23 +429,23 @@ async def _remediate_impl(request: RemediationRequest) -> ActionResult:
 
         result = restart_pod(namespace=namespace, pod_name=pod_name)
 
-    elif "rollback" in action_type:
+    elif action_type == "rollback":
         deployment_name = request.deployment_name or service
         result = rollback_deployment(namespace=namespace, deployment_name=deployment_name)
 
-    elif "scale" in action_type:
+    elif action_type == "scale":
         deployment_name = request.deployment_name or service
         replicas = request.replicas if request.replicas is not None else 3
         result = scale_deployment(
             namespace=namespace, deployment_name=deployment_name, replicas=replicas
         )
 
-    elif "patch_configmap" in action_type:
+    elif action_type == "patch_configmap":
         cm_name = request.deployment_name or f"{service}-config"
         patch_data = request.patch or {"data": {"LOG_LEVEL": "INFO"}}
         result = patch_configmap(namespace=namespace, name=cm_name, patch=patch_data)
 
-    elif "open_pr" in action_type or "open_github_pr" in action_type:
+    elif action_type == "open_pr":
         repo = request.repo or "neuroops-project/neuroops"
         branch = f"remediation-{request.incident_id}"
         files = {
